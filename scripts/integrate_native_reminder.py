@@ -1,0 +1,151 @@
+from pathlib import Path
+
+java_dir = Path("GleisonBarbeariaAndroid/app/src/main/java/com/gleisonbarbearia/app")
+main = java_dir / "MainActivity.java"
+src = main.read_text(encoding="utf-8")
+if "JavascriptInterface" not in src:
+    src = src.replace("import android.webkit.WebViewClient;", "import android.webkit.WebViewClient;\nimport android.webkit.JavascriptInterface;")
+if "android.permission.POST_NOTIFICATIONS" not in src:
+    src = src.replace("import android.os.Bundle;", "import android.os.Bundle;\nimport android.Manifest;\nimport android.app.AlarmManager;\nimport android.content.Intent;\nimport android.content.pm.PackageManager;\nimport android.net.Uri;\nimport android.provider.Settings;")
+    src = src.replace("setContentView(webView);", """setContentView(webView);
+                  if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                      checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                      requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1001);
+                  }
+                  if (android.os.Build.VERSION.SDK_INT >= 31) {
+                      AlarmManager alarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
+                      if (alarmManager != null && !alarmManager.canScheduleExactAlarms()) {
+                          try {
+                              startActivity(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                                  Uri.parse("package:" + getPackageName())));
+                          } catch (Exception ignored) {}
+                      }
+                  }""", 1)
+if "GleisonAndroidBridge" not in src:
+    src = src.replace("setContentView(webView);", 'webView.addJavascriptInterface(new GleisonAndroidBridge(this), "GleisonAndroid");\n                  setContentView(webView);')
+main.write_text(src, encoding="utf-8")
+
+(java_dir / "GleisonAndroidBridge.java").write_text("""package com.gleisonbarbearia.app;
+
+import android.app.AlarmManager;
+import android.app.PendingIntent;
+import android.content.Context;
+import android.content.Intent;
+import android.webkit.JavascriptInterface;
+
+public class GleisonAndroidBridge {
+    private final Context context;
+    public GleisonAndroidBridge(Context context) { this.context = context.getApplicationContext(); }
+
+    @JavascriptInterface
+    public void agendarLembrete(String dataHoraIso, String titulo, String corpo) {
+        try {
+            String iso = dataHoraIso == null ? "" : dataHoraIso.trim();
+            if (iso.length() < 16) return;
+            String normalized = iso.replace("T", " ");
+            java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US);
+            f.setTimeZone(java.util.TimeZone.getTimeZone("America/Sao_Paulo"));
+            java.util.Date d = f.parse(normalized.length() >= 19 ? normalized.substring(0,19) : normalized + ":00");
+            if (d == null) return;
+            long trigger = d.getTime() - 3L * 60L * 1000L;
+            if (trigger <= System.currentTimeMillis()) return;
+            Intent intent = new Intent(context, GleisonReminderReceiver.class);
+            intent.putExtra("titulo", titulo == null ? "Gleison Barbearia" : titulo);
+            intent.putExtra("corpo", corpo == null ? "Seu horário é em aproximadamente 3 minutos." : corpo);
+            int requestCode = Math.abs((iso + (titulo == null ? "" : titulo)).hashCode());
+            PendingIntent pi = PendingIntent.getBroadcast(context, requestCode, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+            if (am != null) {
+                if (android.os.Build.VERSION.SDK_INT >= 31 && !am.canScheduleExactAlarms()) return;
+                if (android.os.Build.VERSION.SDK_INT >= 23) {
+                    AlarmManager.AlarmClockInfo info = new AlarmManager.AlarmClockInfo(trigger, pi);
+                    am.setAlarmClock(info, pi);
+                } else {
+                    am.setExact(AlarmManager.RTC_WAKEUP, trigger, pi);
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+}
+""", encoding="utf-8")
+
+(java_dir / "GleisonReminderReceiver.java").write_text("""package com.gleisonbarbearia.app;
+
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.media.AudioAttributes;
+import android.net.Uri;
+import android.media.RingtoneManager;
+import android.os.Build;
+
+public class GleisonReminderReceiver extends BroadcastReceiver {
+    private static final String CHANNEL_ID = "gleison_lembrete_v4";
+
+    @Override public void onReceive(Context context, Intent received) {
+        NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        Uri sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Lembretes Gleison Barbearia", NotificationManager.IMPORTANCE_HIGH);
+            AudioAttributes aa = new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build();
+            channel.setSound(sound, aa);
+            channel.enableVibration(true);
+            channel.setVibrationPattern(new long[]{0,180,70,180,70,700});
+            manager.createNotificationChannel(channel);
+        }
+        Intent open = new Intent(context, MainActivity.class);
+        open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        PendingIntent pi = PendingIntent.getActivity(context, 0, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        String titulo = received.getStringExtra("titulo");
+        String corpo = received.getStringExtra("corpo");
+        if (titulo == null || titulo.trim().isEmpty()) titulo = "Gleison Barbearia";
+        if (corpo == null || corpo.trim().isEmpty()) corpo = "Seu horário é em aproximadamente 2 minutos.";
+        android.app.Notification.Builder b = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? new android.app.Notification.Builder(context, CHANNEL_ID) : new android.app.Notification.Builder(context);
+        b.setSmallIcon(R.drawable.ic_stat_notification).setContentTitle(titulo).setContentText(corpo).setStyle(new android.app.Notification.BigTextStyle().bigText(corpo)).setAutoCancel(true).setContentIntent(pi).setPriority(android.app.Notification.PRIORITY_HIGH).setVisibility(android.app.Notification.VISIBILITY_PUBLIC).setVibrate(new long[]{0,180,70,180,70,700});
+        manager.notify((int)(System.currentTimeMillis() & 0x7fffffff), b.build());
+    }
+}
+""", encoding="utf-8")
+
+manifest = Path("GleisonBarbeariaAndroid/app/src/main/AndroidManifest.xml")
+ms = manifest.read_text(encoding="utf-8")
+if "android.permission.POST_NOTIFICATIONS" not in ms:
+    pos = ms.find(">")
+    if pos < 0:
+        raise SystemExit("AndroidManifest.xml inválido.")
+    ms = ms[:pos+1] + '\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />' + ms[pos+1:]
+if "android.permission.SCHEDULE_EXACT_ALARM" not in ms:
+    pos = ms.find(">")
+    ms = ms[:pos+1] + '\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />' + ms[pos+1:]
+manifest.write_text(ms, encoding="utf-8")
+
+html = Path("GleisonBarbeariaAndroid/app/src/main/assets/index.html")
+h = html.read_text(encoding="utf-8")
+if "GleisonAndroid.agendarLembrete" not in h:
+    old = "    localStorage.setItem('gleison_telefone', telefoneNumeros);\n    closeBooking();"
+    new = "    localStorage.setItem('gleison_telefone', telefoneNumeros);\n    if(window.GleisonAndroid && typeof window.GleisonAndroid.agendarLembrete==='function'){\n      window.GleisonAndroid.agendarLembrete(dataHora, 'Gleison Barbearia', 'Seu horário é em aproximadamente 3 minutos, às '+selectedTime+' — '+servico+'.');\n    }\n    closeBooking();"
+    if old in h:
+        h = h.replace(old, new, 1)
+    else:
+        marker = "closeBooking();"
+        if marker not in h:
+            raise SystemExit("Não encontrei o ponto de fechamento da tela de agendamento.")
+        h = h.replace(marker, "if(window.GleisonAndroid && typeof window.GleisonAndroid.agendarLembrete==='function'){ window.GleisonAndroid.agendarLembrete(dataHora, 'Gleison Barbearia', 'Seu horário é em aproximadamente 3 minutos.'); }\n    " + marker, 1)
+# MODO_TESTE_LEMBRETE_2_MIN: libera temporariamente horários próximos no APK de teste.
+# O ajuste fica somente no asset do APK; o sistema online não é alterado.
+if "MODO_TESTE_LEMBRETE_2_MIN" not in h:
+    h = h.replace("</body>", """<script>
+/* MODO_TESTE_LEMBRETE_2_MIN */
+(function(){
+  window.GLEISON_TESTE_LEMBRETE_2_MIN = true;
+  var aviso = document.createElement('div');
+  aviso.style.cssText='position:fixed;bottom:8px;left:8px;right:8px;z-index:99999;background:#111;color:#fff;padding:8px;border-radius:8px;font-size:12px;text-align:center';
+  aviso.textContent='MODO TESTE: lembrete em 3 minutos';
+  document.addEventListener('DOMContentLoaded',function(){document.body.appendChild(aviso);});
+})();
+</script></body>""")
+html.write_text(h, encoding="utf-8")
+print("Integração nativa concluída.")
