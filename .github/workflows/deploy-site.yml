@@ -1,0 +1,2276 @@
+name: Publicar sistema online
+# Publicação da ordenação da agenda administrativa
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'GleisonBarbearia_2.0_V27_FCM.zip'
+      - 'admin.html'
+      - '.github/workflows/deploy-site.yml'
+      - 'scripts/sincronizar_horarios_cliente.py'
+      - 'scripts/adicionar_foto_perfil_cliente.py'
+      - 'file_00000000418c820e9ae7d7eeedbc5a98.png'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+
+      - name: Preparar sistema
+        run: |
+          rm -rf GleisonBarbeariaAndroid
+          rm -rf site
+
+          unzip -o "GleisonBarbearia_2.0_V27_FCM.zip"
+
+          test -f GleisonBarbeariaAndroid/app/src/main/assets/index.html
+          test -f admin.html
+
+          mkdir -p site
+
+          cp GleisonBarbeariaAndroid/app/src/main/assets/index.html site/index.html
+          cp admin.html site/admin.html
+          cp file_00000000418c820e9ae7d7eeedbc5a98.png site/logo-barbearia.png
+
+          echo "Sistema preparado para publicação."
+          python3 scripts/sincronizar_horarios_cliente.py
+          python3 scripts/integrar_lembrete_online.py
+
+      - name: Identidade do site da Gleison Barbearia
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("site/index.html")
+          s=p.read_text(encoding="utf-8")
+          meta='''<meta name="theme-color" content="#171b1f"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="description" content="Gleison Barbearia — agendamento online e atendimento."><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">'''
+          if 'name="theme-color"' not in s and "</head>" in s:
+              s=s.replace("</head>",meta+"</head>",1)
+          s=s.replace("<title>Gleison Barbearia</title>","<title>Gleison Barbearia | Agendamento Online</title>",1)
+          if "<title>" not in s and "</head>" in s:
+              s=s.replace("</head>","<title>Gleison Barbearia | Agendamento Online</title></head>",1)
+          p.write_text(s,encoding="utf-8")
+          print("Identidade do site aplicada.")
+          PY
+
+
+      - name: Corrigir carregamento do banner sem piscada
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p=Path("site/index.html")
+          s=p.read_text(encoding="utf-8")
+
+          code=r'''
+          <style id="banner-admin-safe-style">
+          /* O .hero original fica invisível desde o primeiro paint.
+             Assim a imagem antiga em base64 nunca aparece antes da nova. */
+          .hero{
+            visibility:hidden!important;
+            background:#0b0d0f!important;
+          }
+          .banner-admin-safe{
+            position:relative!important;
+            overflow:hidden!important;
+            background:#0b0d0f!important;
+          }
+          .banner-admin-safe.banner-admin-safe-ready{
+            visibility:visible!important;
+          }
+          .banner-admin-safe-img{
+            position:absolute!important;
+            inset:0!important;
+            width:100%!important;
+            height:100%!important;
+            object-fit:cover!important;
+            object-position:center!important;
+            z-index:1!important;
+            display:block!important;
+            pointer-events:none!important;
+          }
+          .banner-admin-safe .heroText{
+            z-index:2!important;
+          }
+          .banner-admin-safe .heroText h1,
+          .banner-admin-safe .heroText p{
+            display:none!important;
+          }
+          .banner-admin-safe .heroText .booking{
+            display:inline-flex!important;
+            position:relative!important;
+            z-index:3!important;
+          }
+          .banner-admin-safe-hidden{
+            display:none!important;
+            visibility:hidden!important;
+          }
+          .banner-admin-safe:not(.banner-admin-safe-ready){
+            visibility:hidden!important;
+          }
+          </style>
+          <script id="banner-admin-safe-script">
+          (function(){
+            var estado={banner:null,img:null,observer:null,tentativas:0};
+
+            function acharBanner(){
+              var ns=document.querySelectorAll("h1,h2,h3");
+              for(var i=0;i<ns.length;i++){
+                var t=String(ns[i].textContent||"").replace(/\s+/g," ").trim().toLowerCase();
+                if(t.indexOf("seu estilo")<0 && t.indexOf("agendamento online")<0) continue;
+                var p=ns[i].parentElement;
+                for(var n=0;p&&n<10;n++,p=p.parentElement){
+                  var r=p.getBoundingClientRect();
+                  if(r.width>=document.documentElement.clientWidth*.85 && r.height>=180 && r.height<=800) return p;
+                }
+              }
+              return null;
+            }
+
+            function proteger(a,img){
+              if(!a||!img)return;
+              a.classList.add("banner-admin-safe");
+              Array.prototype.forEach.call(a.children,function(el){
+                if(el===img || el.classList.contains("heroText")){
+                  el.classList.remove("banner-admin-safe-hidden");
+                }else{
+                  el.classList.add("banner-admin-safe-hidden");
+                }
+              });
+            }
+
+            function aplicar(){
+              if(estado.banner || estado.tentativas>40)return;
+              var a=acharBanner();
+              if(!a){
+                estado.tentativas++;
+                setTimeout(aplicar,50);
+                return;
+              }
+              estado.banner=a;
+              proteger(a,null);
+
+              var tentar=function(){
+                if(typeof supabaseClient==="undefined"){
+                  setTimeout(tentar,50);
+                  return;
+                }
+                supabaseClient.rpc("obter_config_banner",{}).then(function(r){
+                  if(r.error)throw r.error;
+                  var row=Array.isArray(r.data)?(r.data[0]||null):r.data;
+                  if(!row || !row.imagem_url)throw new Error("Banner não configurado");
+
+                  var url=row.imagem_url+(row.imagem_url.indexOf("?")>=0?"&":"?")+"v="+encodeURIComponent(row.atualizado_em||Date.now());
+                  var img=a.querySelector(".banner-admin-safe-img");
+                  if(!img){
+                    img=document.createElement("img");
+                    img.className="banner-admin-safe-img";
+                    img.alt="Gleison Barbearia";
+                    a.appendChild(img);
+                  }
+                  estado.img=img;
+                  img.onload=function(){
+                    proteger(a,img);
+                    a.classList.add("banner-admin-safe-ready");
+                    if(estado.observer){estado.observer.disconnect();estado.observer=null;}
+                  };
+                  img.onerror=function(){
+                    a.classList.remove("banner-admin-safe-ready");
+                    a.style.visibility="visible";
+                    if(estado.observer){estado.observer.disconnect();estado.observer=null;}
+                  };
+                  img.src=url;
+                  proteger(a,img);
+
+                  if(window.MutationObserver && document.body){
+                    estado.observer=new MutationObserver(function(){
+                      if(!estado.img||!estado.banner)return;
+                      proteger(estado.banner,estado.img);
+                    });
+                    estado.observer.observe(a,{childList:true,subtree:true,attributes:true,attributeFilter:["class","style"]});
+                  }
+                }).catch(function(e){
+                  console.warn("Banner:",e);
+                  a.style.visibility="visible";
+                });
+              };
+              tentar();
+            }
+
+            function iniciar(){
+              aplicar();
+            }
+
+            if(document.readyState==="loading"){
+              document.addEventListener("DOMContentLoaded",iniciar,{once:true});
+            }else{
+              iniciar();
+            }
+          })();
+          </script>
+          '''
+
+          # O bloqueio entra no início do body para impedir que o banner original
+          # apareça antes da imagem configurada pelo administrador.
+          s=re.sub(r'<style id="banner-admin-safe-style">.*?</script>\s*',"",s,flags=re.S)
+          if 'id="banner-admin-safe-script"' not in s:
+              s=s.replace("<body>","<body>"+code,1)
+          else:
+              s=re.sub(r'<script id="banner-admin-safe-script">.*?</script>\s*',"",s,flags=re.S)
+              s=s.replace("<body>","<body>"+code,1)
+
+          p.write_text(s,encoding="utf-8")
+          print("Banner agora é bloqueado no início do carregamento e só aparece após a imagem escolhida estar pronta.")
+          PY
+
+      - name: Sincronizar horários configurados pelo administrador com a agenda do cliente
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path("site/index.html")
+          s=p.read_text(encoding="utf-8")
+
+          code=r'''
+          <script id="horarios-funcionamento-cliente-online">
+          (function(){
+            let cache={abertura:'09:00',fechamento:'20:30',fechamentoSabado:'23:00'};
+            const excecoes={};
+
+            function mins(v){
+              const p=String(v||'').slice(0,5).split(':').map(Number);
+              return p.length===2 && p.every(Number.isFinite) ? p[0]*60+p[1] : null;
+            }
+
+            async function carregarHorarios(){
+              try{
+                const r=await supabaseClient.rpc('obter_horarios_funcionamento',{});
+                if(r.error) throw r.error;
+                const row=Array.isArray(r.data)?r.data[0]:r.data;
+                if(row){
+                  cache={
+                    abertura:String(row.hora_abertura||'09:00').slice(0,5),
+                    fechamento:String(row.hora_fechamento||'20:30').slice(0,5),
+                    fechamentoSabado:String(row.hora_fechamento_sabado||'23:00').slice(0,5)
+                  };
+                }
+              }catch(e){ console.warn('Horários do administrador:',e); }
+              return cache;
+            }
+
+            async function carregarExcecao(data){
+              if(!data) return null;
+              try{
+                const r=await supabaseClient.rpc('listar_excecoes_funcionamento',{
+                  p_inicio:data,p_fim:data
+                });
+                if(r.error) throw r.error;
+                const row=Array.isArray(r.data)?(r.data[0]||null):r.data;
+                excecoes[data]=row||null;
+                return excecoes[data];
+              }catch(e){
+                console.warn('Exceção de funcionamento:',e);
+                excecoes[data]=null;
+                return null;
+              }
+            }
+
+            function dia(data){
+              const p=String(data||'').split('-').map(Number);
+              return p.length===3 && p.every(Number.isFinite)
+                ? new Date(p[0],p[1]-1,p[2]).getDay()
+                : new Date().getDay();
+            }
+
+            window.horarioFuncionamentoCliente=function(data){
+              const d=dia(data||dataLocalHoje());
+              const ex=excecoes[data||dataLocalHoje()];
+              if(ex && ex.aberta===false) return null;
+              if((d===0 || d===1) && !(ex && ex.aberta===true)) return null;
+
+              const inicio=mins(cache.abertura);
+              const fim=mins(d===6 ? cache.fechamentoSabado : cache.fechamento);
+              if(inicio===null || fim===null || fim<=inicio) return null;
+              return {
+                inicio:inicio,
+                fim:fim,
+                fimTexto:d===6 ? cache.fechamentoSabado : cache.fechamento
+              };
+            };
+
+            window.estaDentroDoHorarioCliente=function(){
+              const h=window.horarioFuncionamentoCliente(dataLocalHoje());
+              if(!h) return false;
+              const agora=new Date();
+              const m=agora.getHours()*60+agora.getMinutes();
+              return m>=h.inicio && m<h.fim;
+            };
+
+            window.dataFechadaPorDia=function(data){
+              const d=dia(data);
+              const ex=excecoes[data];
+              if(ex && ex.aberta===true) return false;
+              if(ex && ex.aberta===false) return true;
+              return d===0 || d===1;
+            };
+
+            window.getTimesForDate=function(data){
+              const h=window.horarioFuncionamentoCliente(data);
+              if(!h) return [];
+              const lista=[];
+              for(let m=h.inicio;m<=h.fim;m+=30){
+                if(m>11*60 && m<14*60) continue;
+                lista.push(String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0'));
+              }
+              return lista;
+            };
+
+            async function atualizarAgendaCliente(){
+              const input=document.getElementById('date');
+              const data=input && input.value;
+              if(!data) return;
+              await carregarHorarios();
+              await carregarExcecao(data);
+              if(typeof loadOccupiedTimes==='function') await loadOccupiedTimes();
+              if(typeof renderTimes==='function') renderTimes();
+            }
+
+            const originalOpen=window.openBooking;
+            if(typeof originalOpen==='function'){
+              window.openBooking=async function(){
+                const input=document.getElementById('date');
+                const data=input && input.value;
+                await carregarHorarios();
+                if(data) await carregarExcecao(data);
+                return originalOpen.apply(this,arguments);
+              };
+            }
+
+            const originalConfirm=window.confirmBooking;
+            if(typeof originalConfirm==='function'){
+              window.confirmBooking=async function(){
+                const input=document.getElementById('date');
+                const data=input && input.value;
+                await carregarHorarios();
+                if(data) await carregarExcecao(data);
+                return originalConfirm.apply(this,arguments);
+              };
+            }
+
+            document.addEventListener('DOMContentLoaded',function(){
+              carregarHorarios().then(function(){
+                const input=document.getElementById('date');
+                if(input && input.value) atualizarAgendaCliente();
+              });
+              const input=document.getElementById('date');
+              if(input){
+                input.addEventListener('change',atualizarAgendaCliente);
+              }
+              setInterval(function(){
+                const modal=document.getElementById('bookingModal');
+                if(modal && modal.classList.contains('show')) atualizarAgendaCliente();
+                else carregarHorarios();
+              },15000);
+            });
+          })();
+          </script>
+          '''
+
+          if 'id="horarios-funcionamento-cliente-online"' not in s and "</body>" in s:
+              s=s.replace("</body>",code+"</body>",1)
+          p.write_text(s,encoding="utf-8")
+          print("Agenda do cliente sincronizada com os horários salvos pelo administrador.")
+          PY
+
+      - name: Adicionar botão Atualizar
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("site/index.html")
+          s = p.read_text(encoding="utf-8")
+
+          code = r'''
+          <button id="btn-atualizar-online" type="button" aria-label="Atualizar sistema">↻ Atualizar</button>
+          <style>
+          #btn-atualizar-online{position:fixed;right:16px;bottom:78px;z-index:2147483646;border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:10px 16px;background:#f2c14e;color:#111;font:700 14px Arial,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.35);cursor:pointer}
+          #btn-atualizar-online:active{transform:scale(.96)}
+          </style>
+          <script>
+          document.getElementById("btn-atualizar-online").addEventListener("click",function(){
+            this.disabled=true;
+            this.textContent="↻ Atualizando...";
+            var base=window.location.pathname;
+            window.location.replace(base+"?atualizar="+Date.now());
+          });
+          </script>
+          '''
+
+          if 'id="btn-atualizar-online"' not in s and "<body>" in s:
+              s = s.replace("<body>", "<body>" + code, 1)
+              p.write_text(s, encoding="utf-8")
+
+          print("Botão Atualizar adicionado ao sistema online.")
+          PY
+
+      - name: Menu dos três pontos no topo
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("site/index.html")
+          s = p.read_text(encoding="utf-8")
+
+          code = r'''
+          <style id="menu-tres-pontos-online">
+          #menu-tres-pontos-btn{position:relative;display:flex;align-items:center;justify-content:center;width:44px;height:44px;margin-left:6px;border:1px solid rgba(255,255,255,.18);border-radius:50%;background:#171b1f;color:#fff;font:700 25px/1 Arial,sans-serif;cursor:pointer;flex:0 0 44px;padding:0}
+          #menu-tres-pontos-btn:active{transform:scale(.95)}
+          #menu-tres-pontos-overlay{display:none;position:fixed;inset:0;z-index:2147483645;background:rgba(0,0,0,.38)}
+          #menu-tres-pontos-overlay.aberto{display:block}
+          #menu-tres-pontos{position:absolute;top:68px;right:14px;width:min(300px,calc(100vw - 28px));background:#171b1f;border:1px solid rgba(255,255,255,.14);border-radius:16px;box-shadow:0 12px 34px rgba(0,0,0,.5);padding:8px}
+          #menu-tres-pontos button{display:flex;align-items:center;width:100%;min-height:48px;border:0;border-radius:10px;background:transparent;color:#fff;text-align:left;padding:11px 12px;font:700 15px Arial,sans-serif;cursor:pointer}
+          #menu-tres-pontos button:active,#menu-tres-pontos button:hover{background:rgba(255,255,255,.08)}
+          #menu-tres-pontos button .ico{width:30px;flex:0 0 30px;font-size:19px}
+          .gc-menu-nav-hidden{display:none!important}
+          @media(max-width:520px){
+            #menu-tres-pontos-btn{width:42px;height:42px;flex-basis:42px;font-size:24px}
+            #menu-tres-pontos{top:62px}
+          }
+          </style>
+
+          <div id="menu-tres-pontos-overlay" aria-hidden="true">
+            <div id="menu-tres-pontos" role="menu" aria-label="Mais opções">
+              <button type="button" data-menu-acao="inicio"><span class="ico">⌂</span>Início</button>
+              <button type="button" data-menu-acao="agenda"><span class="ico">📅</span>Agenda</button>
+              <button type="button" data-menu-acao="perfil"><span class="ico">👤</span>Meu perfil</button>
+              <button type="button" data-menu-acao="notificacoes"><span class="ico">🔔</span>Notificações</button>
+              <button type="button" data-menu-acao="administrador"><span class="ico">🛡️</span>Área do administrador</button>
+            </div>
+          </div>
+
+          <script id="menu-tres-pontos-script">
+          (function(){
+            function fecharMenu(){
+              var o=document.getElementById("menu-tres-pontos-overlay");
+              if(o){o.classList.remove("aberto");o.setAttribute("aria-hidden","true");}
+            }
+            function abrirMenu(){
+              var o=document.getElementById("menu-tres-pontos-overlay");
+              if(o){o.classList.add("aberto");o.setAttribute("aria-hidden","false");}
+            }
+            function clicarTab(nome){
+              if(typeof window.tab==="function"){
+                try{ window.tab(nome); return true; }catch(e){}
+              }
+              var b=document.querySelector("[onclick*=\"tab('"+nome+"')\"]");
+              if(b){b.click();return true;}
+              return false;
+            }
+            function esconderInicioAgendaRodape(){
+              var itens=document.querySelectorAll("button, a, [role='button']");
+              Array.prototype.forEach.call(itens,function(el){
+                if(el.closest("#menu-tres-pontos, #menu-tres-pontos-overlay")) return;
+                var t=(el.innerText||el.textContent||"").replace(/\s+/g," ").trim().toLowerCase();
+                if(t!=="início" && t!=="inicio" && t!=="agenda") return;
+                var r=el.getBoundingClientRect();
+                if(r.top > window.innerHeight*0.65) el.classList.add("gc-menu-nav-hidden");
+              });
+            }
+            function prepararMenu(){
+              if(document.getElementById("menu-tres-pontos-btn")) return;
+              var header=document.querySelector("header");
+              if(!header) return;
+              var btn=document.createElement("button");
+              btn.id="menu-tres-pontos-btn";
+              btn.type="button";
+              btn.setAttribute("aria-label","Mais opções");
+              btn.setAttribute("title","Mais opções");
+              btn.innerHTML="⋮";
+              btn.addEventListener("click",function(e){e.stopPropagation();abrirMenu();});
+              header.appendChild(btn);
+            }
+            document.addEventListener("click",function(e){
+              var item=e.target.closest("[data-menu-acao]");
+              if(item){
+                var acao=item.getAttribute("data-menu-acao");
+                if(acao==="administrador"){fecharMenu();window.location.href="admin.html";return;}
+                fecharMenu();
+                if(acao==="inicio") clicarTab("inicio");
+                if(acao==="agenda") clicarTab("agenda");
+                if(acao==="perfil") clicarTab("perfil");
+                if(acao==="notificacoes") clicarTab("notificacoes");
+                return;
+              }
+              var overlay=document.getElementById("menu-tres-pontos-overlay");
+              if(overlay && e.target===overlay) fecharMenu();
+            });
+            document.addEventListener("keydown",function(e){if(e.key==="Escape")fecharMenu();});
+            if(document.readyState==="loading"){
+              document.addEventListener("DOMContentLoaded",function(){
+                prepararMenu();
+                esconderInicioAgendaRodape();
+                setTimeout(esconderInicioAgendaRodape,500);
+                setTimeout(esconderInicioAgendaRodape,1500);
+              });
+            }else{
+              prepararMenu();
+              esconderInicioAgendaRodape();
+              setTimeout(esconderInicioAgendaRodape,500);
+              setTimeout(esconderInicioAgendaRodape,1500);
+            }
+            document.addEventListener("click",function(){setTimeout(esconderInicioAgendaRodape,100)},true);
+          })();
+          </script>
+          '''
+
+          if 'id="menu-tres-pontos-online"' not in s and "</body>" in s:
+              s = s.replace("</body>", code + "</body>", 1)
+
+          p.write_text(s, encoding="utf-8")
+          print("Menu dos 3 pontinhos atualizado somente no topo, com Perfil, Notificações e Área do administrador.")
+          PY
+
+      - name: Cadastro único do cliente
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path("site/index.html")
+          s=p.read_text(encoding="utf-8")
+
+          code=r'''
+          <style id="cadastro-unico-cliente-style">
+          #gc-cadastro-overlay,#gc-perfil-overlay{position:fixed;inset:0;z-index:2147483647;display:none;align-items:center;justify-content:center;padding:18px;background:rgba(0,0,0,.72)}
+          #gc-cadastro-overlay.aberto,#gc-perfil-overlay.aberto{display:flex}
+          .gc-modal{width:min(430px,100%);max-height:90vh;overflow:auto;background:#11161a;color:#fff;border:1px solid rgba(242,193,78,.35);border-radius:22px;box-shadow:0 18px 50px rgba(0,0,0,.65);padding:22px}
+          .gc-modal h2{margin:0 0 8px;color:#f2c14e;font:800 24px Arial,sans-serif}
+          .gc-modal p{margin:0 0 18px;color:#c7ccd2;font:400 14px/1.45 Arial,sans-serif}
+          .gc-modal label{display:block;margin:12px 0 6px;color:#fff;font:700 13px Arial,sans-serif}
+          .gc-modal input{box-sizing:border-box;width:100%;border:1px solid rgba(255,255,255,.18);border-radius:12px;background:#171c20;color:#fff;padding:13px 14px;font:600 16px Arial,sans-serif;outline:none}
+          .gc-modal input:focus{border-color:#f2c14e;box-shadow:0 0 0 2px rgba(242,193,78,.12)}
+          .gc-modal .gc-acoes{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}
+          .gc-modal button{border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:13px 14px;background:#171c20;color:#fff;font:800 15px Arial,sans-serif;cursor:pointer}
+          .gc-modal button.gc-principal{background:#f2c14e;color:#171717;border-color:#f2c14e}
+          .gc-modal button:disabled{opacity:.55;cursor:wait}
+          #gc-cadastro-msg,#gc-perfil-msg{min-height:18px;margin-top:10px;font:600 13px Arial,sans-serif}
+          .gc-ok{color:#4dcc83}.gc-erro{color:#ff667a}.gc-info{color:#c7ccd2}
+          .gc-telefone-salvo{font:600 12px Arial,sans-serif;color:#8f989f;margin-top:5px}
+          input.gc-cliente-preenchido{border-color:rgba(242,193,78,.28)!important}
+          </style>
+
+          <div id="gc-cadastro-overlay" aria-hidden="true">
+            <div class="gc-modal" role="dialog" aria-modal="true" aria-labelledby="gc-cadastro-titulo">
+              <h2 id="gc-cadastro-titulo">👤 Vamos cadastrar você</h2>
+              <p>Faça o cadastro uma única vez. Depois, ao agendar, seu nome e telefone serão preenchidos automaticamente.</p>
+              <label for="gc-cadastro-nome">Nome completo</label>
+              <input id="gc-cadastro-nome" type="text" maxlength="120" autocomplete="name" placeholder="Digite seu nome">
+              <label for="gc-cadastro-telefone">Telefone</label>
+              <input id="gc-cadastro-telefone" type="tel" maxlength="15" inputmode="numeric" autocomplete="tel" placeholder="(11) 99999-9999">
+              <label for="gc-cadastro-email">E-mail <span style="font-weight:400;color:#8f989f">(opcional)</span></label>
+              <input id="gc-cadastro-email" type="email" maxlength="160" autocomplete="email" placeholder="seuemail@exemplo.com">
+              <div id="gc-cadastro-msg"></div>
+              <div class="gc-acoes">
+                <button type="button" class="gc-principal" id="gc-cadastro-salvar">Continuar</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="gc-perfil-overlay" aria-hidden="true">
+            <div class="gc-modal" role="dialog" aria-modal="true" aria-labelledby="gc-perfil-titulo">
+              <h2 id="gc-perfil-titulo">👤 Meu perfil</h2>
+              <p>Seus dados ficam salvos para que você não precise digitá-los novamente ao agendar.</p>
+              <label for="gc-perfil-nome">Nome completo</label>
+              <input id="gc-perfil-nome" type="text" maxlength="120" autocomplete="name">
+              <label for="gc-perfil-telefone">Telefone</label>
+              <input id="gc-perfil-telefone" type="tel" maxlength="15" inputmode="numeric" autocomplete="tel">
+              <label for="gc-perfil-email">E-mail <span style="font-weight:400;color:#8f989f">(opcional)</span></label>
+              <input id="gc-perfil-email" type="email" maxlength="160" autocomplete="email">
+              <div id="gc-perfil-msg"></div>
+              <div class="gc-acoes">
+                <button type="button" id="gc-perfil-fechar">Fechar</button>
+                <button type="button" class="gc-principal" id="gc-perfil-salvar">Salvar</button>
+              </div>
+            </div>
+          </div>
+
+          <script id="cadastro-unico-cliente-script">
+          (function(){
+            var PHONE_KEY="gleison_telefone";
+            var NAME_KEY="gleison_nome";
+            var EMAIL_KEY="gleison_email";
+
+            function digits(v){return String(v||"").replace(/\D/g,"");}
+            function fmtPhone(v){
+              var d=digits(v).slice(0,11);
+              if(d.length<=2)return d;
+              if(d.length<=7)return "("+d.slice(0,2)+") "+d.slice(2);
+              return "("+d.slice(0,2)+") "+d.slice(2,7)+"-"+d.slice(7);
+            }
+            function getSB(){
+              try{
+                if(typeof supabaseClient!=="undefined" && supabaseClient) return supabaseClient;
+              }catch(e){}
+              return window.supabaseClient||null;
+            }
+            function getSaved(){
+              return {
+                nome:(localStorage.getItem(NAME_KEY)||"").trim(),
+                telefone:(localStorage.getItem(PHONE_KEY)||"").trim(),
+                email:(localStorage.getItem(EMAIL_KEY)||"").trim()
+              };
+            }
+            function saveLocal(c){
+              try{
+                localStorage.setItem(NAME_KEY,c.nome||"");
+                localStorage.setItem(PHONE_KEY,c.telefone||"");
+                localStorage.setItem(EMAIL_KEY,c.email||"");
+              }catch(e){}
+            }
+            function setMsg(id,text,cls){
+              var el=document.getElementById(id);
+              if(el){el.textContent=text||"";el.className=cls||"gc-info";}
+            }
+            function abrir(id){
+              var el=document.getElementById(id);
+              if(el){el.classList.add("aberto");el.setAttribute("aria-hidden","false");}
+            }
+            function fechar(id){
+              var el=document.getElementById(id);
+              if(el){el.classList.remove("aberto");el.setAttribute("aria-hidden","true");}
+            }
+
+            async function rpc(nome,args){
+              var sb=getSB();
+              if(!sb || typeof sb.rpc!=="function") throw new Error("Sistema ainda está carregando. Tente novamente.");
+              var r=await sb.rpc(nome,args);
+              if(r.error) throw r.error;
+              return Array.isArray(r.data)?(r.data[0]||null):r.data;
+            }
+
+            function preencherCampos(){
+              var c=getSaved();
+              if(!c.telefone || digits(c.telefone).length!==11)return;
+
+              var inputs=Array.prototype.slice.call(document.querySelectorAll("input"));
+              inputs.forEach(function(el){
+                if(el.closest("#gc-cadastro-overlay,#gc-perfil-overlay"))return;
+                var meta=((el.id||"")+" "+(el.name||"")+" "+(el.placeholder||"")).toLowerCase();
+                if(el.type==="tel" || /telefone|celular|phone/.test(meta)){
+                  el.value=fmtPhone(c.telefone);
+                  el.readOnly=true;
+                  el.setAttribute("aria-readonly","true");
+                  el.classList.add("gc-cliente-preenchido");
+                  el.dispatchEvent(new Event("input",{bubbles:true}));
+                  el.dispatchEvent(new Event("change",{bubbles:true}));
+                }
+                if(el.type==="email" || /e-?mail/.test(meta)){
+                  if(c.email){el.value=c.email;el.readOnly=true;el.setAttribute("aria-readonly","true");}
+                }
+                if(/nome|name/.test(meta) && el.type==="text"){
+                  if(c.nome){el.value=c.nome;el.readOnly=true;el.setAttribute("aria-readonly","true");el.classList.add("gc-cliente-preenchido");}
+                }
+              });
+            }
+
+            async function carregarCadastroExistente(){
+              var c=getSaved();
+              if(digits(c.telefone).length!==11)return false;
+              try{
+                var remoto=await rpc("obter_cliente_telefone",{p_telefone:c.telefone});
+                if(remoto){
+                  saveLocal({
+                    nome:remoto.nome||c.nome,
+                    telefone:remoto.telefone||c.telefone,
+                    email:remoto.email||c.email
+                  });
+                }
+                return true;
+              }catch(e){
+                return true;
+              }
+            }
+
+            function prepararModalInicial(){
+              var c=getSaved();
+              var nome=document.getElementById("gc-cadastro-nome");
+              var tel=document.getElementById("gc-cadastro-telefone");
+              var email=document.getElementById("gc-cadastro-email");
+              if(nome)nome.value=c.nome;
+              if(tel)tel.value=fmtPhone(c.telefone);
+              if(email)email.value=c.email;
+              if(digits(c.telefone).length!==11)abrir("gc-cadastro-overlay");
+            }
+
+            async function salvarCadastro(){
+              var btn=document.getElementById("gc-cadastro-salvar");
+              var nome=(document.getElementById("gc-cadastro-nome")||{}).value||"";
+              var telefone=(document.getElementById("gc-cadastro-telefone")||{}).value||"";
+              var email=(document.getElementById("gc-cadastro-email")||{}).value||"";
+              var d=digits(telefone);
+              if(nome.trim().length<2){setMsg("gc-cadastro-msg","Digite seu nome completo.","gc-erro");return;}
+              if(d.length!==11){setMsg("gc-cadastro-msg","Digite um telefone com DDD.","gc-erro");return;}
+              if(email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){setMsg("gc-cadastro-msg","Confira o e-mail informado.","gc-erro");return;}
+              btn.disabled=true;
+              setMsg("gc-cadastro-msg","Salvando seu cadastro...","gc-info");
+              try{
+                var c=await rpc("salvar_cadastro_cliente",{p_nome:nome.trim(),p_telefone:d,p_email:email.trim()||null});
+                if(!c)throw new Error("Não foi possível salvar o cadastro.");
+                saveLocal({nome:c.nome||nome.trim(),telefone:c.telefone||d,email:c.email||email.trim()});
+                fechar("gc-cadastro-overlay");
+                setMsg("gc-cadastro-msg","","");
+                preencherCampos();
+              }catch(e){
+                setMsg("gc-cadastro-msg",e.message||"Não foi possível salvar o cadastro.","gc-erro");
+              }finally{
+                btn.disabled=false;
+              }
+            }
+
+            function abrirPerfil(){
+              var c=getSaved();
+              document.getElementById("gc-perfil-nome").value=c.nome||"";
+              document.getElementById("gc-perfil-telefone").value=fmtPhone(c.telefone||"");
+              document.getElementById("gc-perfil-email").value=c.email||"";
+              setMsg("gc-perfil-msg","","");
+              abrir("gc-perfil-overlay");
+            }
+
+            async function salvarPerfil(){
+              var btn=document.getElementById("gc-perfil-salvar");
+              var c=getSaved();
+              var nome=document.getElementById("gc-perfil-nome").value.trim();
+              var novo=digits(document.getElementById("gc-perfil-telefone").value);
+              var email=document.getElementById("gc-perfil-email").value.trim();
+              if(nome.length<2){setMsg("gc-perfil-msg","Digite seu nome completo.","gc-erro");return;}
+              if(novo.length!==11){setMsg("gc-perfil-msg","Digite um telefone com DDD.","gc-erro");return;}
+              if(email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){setMsg("gc-perfil-msg","Confira o e-mail informado.","gc-erro");return;}
+              btn.disabled=true;
+              setMsg("gc-perfil-msg","Salvando...","gc-info");
+              try{
+                var r=await rpc("atualizar_perfil_cliente",{
+                  p_telefone_atual:c.telefone,
+                  p_nome:nome,
+                  p_novo_telefone:novo,
+                  p_email:email||null
+                });
+                if(!r)throw new Error("Não foi possível atualizar o perfil.");
+                saveLocal({nome:r.nome||nome,telefone:r.telefone||novo,email:r.email||email});
+                fechar("gc-perfil-overlay");
+                preencherCampos();
+              }catch(e){
+                setMsg("gc-perfil-msg",e.message||"Não foi possível atualizar o perfil.","gc-erro");
+              }finally{
+                btn.disabled=false;
+              }
+            }
+
+            function ligarEventos(){
+              var b=document.getElementById("gc-cadastro-salvar");
+              if(b)b.addEventListener("click",salvarCadastro);
+              var pf=document.getElementById("gc-perfil-fechar");
+              if(pf)pf.addEventListener("click",function(){fechar("gc-perfil-overlay");});
+              var ps=document.getElementById("gc-perfil-salvar");
+              if(ps)ps.addEventListener("click",salvarPerfil);
+
+              ["gc-cadastro-telefone","gc-perfil-telefone"].forEach(function(id){
+                var el=document.getElementById(id);
+                if(el)el.addEventListener("input",function(){this.value=fmtPhone(this.value);});
+              });
+
+              var pm=document.querySelector('[data-menu-acao="perfil"]');
+              if(pm)pm.addEventListener("click",function(e){
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                fechar("gc-cadastro-overlay");
+                abrirPerfil();
+              },true);
+
+              ["gc-cadastro-overlay","gc-perfil-overlay"].forEach(function(id){
+                var ov=document.getElementById(id);
+                if(ov)ov.addEventListener("click",function(e){if(e.target===ov && id==="gc-perfil-overlay")fechar(id);});
+              });
+            }
+
+            async function iniciar(){
+              ligarEventos();
+              var tem=await carregarCadastroExistente();
+              if(!tem)prepararModalInicial();
+              preencherCampos();
+
+              var observer=new MutationObserver(function(){preencherCampos();});
+              if(document.body)observer.observe(document.body,{childList:true,subtree:true});
+              setInterval(preencherCampos,1500);
+            }
+
+            if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",iniciar);
+            else setTimeout(iniciar,500);
+
+            window.gleisonAbrirPerfil=abrirPerfil;
+          })();
+          </script>
+          '''
+
+          if 'id="cadastro-unico-cliente-style"' not in s and "</body>" in s:
+              s=s.replace("</body>",code+"</body>",1)
+
+          p.write_text(s,encoding="utf-8")
+          print("Cadastro único do cliente adicionado.")
+          PY
+
+
+      - name: Permitir que o cliente altere a própria foto
+        run: |
+          python3 scripts/adicionar_foto_perfil_cliente.py
+
+      - name: Histórico do cliente
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("site/index.html")
+          s=p.read_text(encoding="utf-8")
+          code=r'''
+          <style id="historico-cliente-online-style">
+          #gc-historico-overlay{position:fixed;inset:0;z-index:2147483647;display:none;align-items:center;justify-content:center;padding:18px;background:rgba(0,0,0,.72)}
+          #gc-historico-overlay.aberto{display:flex}
+          #gc-historico-modal{width:min(470px,100%);max-height:88vh;overflow:auto;background:#11161a;color:#fff;border:1px solid rgba(242,193,78,.35);border-radius:22px;box-shadow:0 18px 50px rgba(0,0,0,.65);padding:20px}
+          #gc-historico-modal h2{margin:0 0 6px;color:#f2c14e;font:800 23px Arial,sans-serif}
+          #gc-historico-modal .gc-hist-sub{margin:0 0 14px;color:#aeb5bb;font:400 13px/1.4 Arial,sans-serif}
+          .gc-hist-card{padding:13px 14px;margin:9px 0;border:1px solid rgba(255,255,255,.12);border-radius:14px;background:#171c20}
+          .gc-hist-top{display:flex;justify-content:space-between;gap:10px;align-items:center}
+          .gc-hist-servico{font:800 15px Arial,sans-serif;color:#fff}
+          .gc-hist-status{font:800 11px Arial,sans-serif;padding:5px 8px;border-radius:999px}
+          .gc-hist-status.atendido{background:#4dcc83;color:#171717}.gc-hist-status.cancelado{background:#e53955;color:#fff}
+          .gc-hist-info{margin-top:7px;color:#c7ccd2;font:600 13px/1.45 Arial,sans-serif}
+          .gc-hist-preco{margin-top:5px;color:#f2c14e;font:800 14px Arial,sans-serif}
+          #gc-historico-fechar{width:100%;margin-top:12px;border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:12px;background:#171c20;color:#fff;font:800 15px Arial,sans-serif}
+          .gc-hist-vazio{padding:18px 4px;color:#aeb5bb;text-align:center;font:600 14px Arial,sans-serif}
+          </style>
+          <div id="gc-historico-overlay" aria-hidden="true">
+            <div id="gc-historico-modal" role="dialog" aria-modal="true" aria-labelledby="gc-historico-titulo">
+              <h2 id="gc-historico-titulo">📋 Meu histórico</h2>
+              <p class="gc-hist-sub">Seus atendimentos anteriores ficam registrados aqui.</p>
+              <div id="gc-historico-lista"><div class="gc-hist-vazio">Carregando histórico...</div></div>
+              <button type="button" id="gc-historico-fechar">Fechar</button>
+            </div>
+          </div>
+          <script id="historico-cliente-online-script">
+          (function(){
+            function sb(){try{return window.supabaseClient||supabaseClient}catch(e){return null}}
+            function digits(v){return String(v||"").replace(/\D/g,"")}
+            function money(v){return v==null||v===""?"":Number(v).toLocaleString("pt-BR",{style:"currency",currency:"BRL"})}
+            function fmtDate(v){
+              var d=new Date(v); if(isNaN(d.getTime()))return "Data não disponível";
+              return d.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit",year:"numeric"})+" às "+d.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
+            }
+            function abrir(){var o=document.getElementById("gc-historico-overlay");if(o){o.classList.add("aberto");o.setAttribute("aria-hidden","false")}}
+            function fechar(){var o=document.getElementById("gc-historico-overlay");if(o){o.classList.remove("aberto");o.setAttribute("aria-hidden","true")}}
+            async function carregar(){
+              var lista=document.getElementById("gc-historico-lista"), telefone=localStorage.getItem("gleison_telefone")||"";
+              if(!lista)return;
+              if(digits(telefone).length!==11){lista.innerHTML='<div class="gc-hist-vazio">Faça seu cadastro para visualizar seu histórico.</div>';return}
+              var client=sb(); if(!client){lista.innerHTML='<div class="gc-hist-vazio">Sistema ainda está carregando.</div>';return}
+              lista.innerHTML='<div class="gc-hist-vazio">Carregando histórico...</div>';
+              try{
+                var r=await client.rpc("listar_historico_cliente",{p_telefone:telefone});
+                if(r.error)throw r.error;
+                var rows=Array.isArray(r.data)?r.data:[];
+                if(!rows.length){lista.innerHTML='<div class="gc-hist-vazio">Você ainda não possui atendimentos anteriores.</div>';return}
+                lista.innerHTML=rows.map(function(a){
+                  var st=a.status==="atendido"?"Atendido":"Cancelado";
+                  var cls=a.status==="atendido"?"atendido":"cancelado";
+                  return '<div class="gc-hist-card"><div class="gc-hist-top"><div class="gc-hist-servico">'+String(a.servico_nome||"Serviço não informado").replace(/[&<>]/g,function(x){return {"&":"&amp;","<":"&lt;",">":"&gt;"}[x]})+'</div><span class="gc-hist-status '+cls+'">'+st+'</span></div><div class="gc-hist-info">📅 '+fmtDate(a.data_hora)+'<br>✂️ '+String(a.barbeiro_nome||"Gleison")+'</div>'+(a.preco!=null?'<div class="gc-hist-preco">'+money(a.preco)+'</div>':"")+'</div>';
+                }).join("");
+              }catch(e){console.error(e);lista.innerHTML='<div class="gc-hist-vazio">Não foi possível carregar o histórico agora.</div>'}
+            }
+            window.abrirHistoricoCliente=function(){abrir();carregar()};
+            document.addEventListener("click",function(e){
+              var b=e.target.closest("[data-menu-acao='historico']"); if(b){e.preventDefault();e.stopImmediatePropagation();window.abrirHistoricoCliente();return}
+              if(e.target.id==="gc-historico-fechar"||e.target.id==="gc-historico-overlay")fechar();
+            },true);
+          })();
+          </script>
+          '''
+          if 'id="historico-cliente-online-style"' not in s and "</body>" in s:
+              s=s.replace("</body>",code+"</body>",1)
+          p.write_text(s,encoding="utf-8")
+          print("Histórico do cliente adicionado.")
+          PY
+
+      - name: Recuperação de conta do cliente
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path("site/index.html")
+          s=p.read_text(encoding="utf-8")
+
+          code=r'''
+          <style id="recuperacao-conta-cliente-style">
+          #gc-recuperacao-overlay{position:fixed;inset:0;z-index:2147483647;display:none;align-items:center;justify-content:center;padding:18px;background:rgba(0,0,0,.72)}
+          #gc-recuperacao-overlay.aberto{display:flex}
+          .gc-rec-modal{width:min(430px,100%);max-height:90vh;overflow:auto;background:#11161a;color:#fff;border:1px solid rgba(242,193,78,.35);border-radius:22px;box-shadow:0 18px 50px rgba(0,0,0,.65);padding:22px}
+          .gc-rec-modal h2{margin:0 0 8px;color:#f2c14e;font:800 24px Arial,sans-serif}
+          .gc-rec-modal p{margin:0 0 18px;color:#c7ccd2;font:400 14px/1.45 Arial,sans-serif}
+          .gc-rec-modal label{display:block;margin:12px 0 6px;color:#fff;font:700 13px Arial,sans-serif}
+          .gc-rec-modal input{box-sizing:border-box;width:100%;border:1px solid rgba(255,255,255,.18);border-radius:12px;background:#171c20;color:#fff;padding:13px 14px;font:600 16px Arial,sans-serif;outline:none}
+          .gc-rec-modal input:focus{border-color:#f2c14e;box-shadow:0 0 0 2px rgba(242,193,78,.12)}
+          .gc-rec-modal .gc-rec-acoes{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}
+          .gc-rec-modal button{border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:13px 14px;background:#171c20;color:#fff;font:800 15px Arial,sans-serif;cursor:pointer}
+          .gc-rec-modal button.gc-rec-principal{background:#f2c14e;color:#171717;border-color:#f2c14e}
+          .gc-rec-modal button:disabled{opacity:.55;cursor:wait}
+          #gc-recuperacao-msg{min-height:18px;margin-top:10px;font:600 13px Arial,sans-serif}
+          .gc-rec-ok{color:#4dcc83}.gc-rec-erro{color:#ff667a}.gc-rec-info{color:#c7ccd2}
+          .gc-rec-link{display:block;width:100%;margin-top:12px;padding:10px 4px;background:transparent!important;border:0!important;color:#f2c14e!important;font:700 13px Arial,sans-serif!important;text-align:center;cursor:pointer}
+          </style>
+
+          <div id="gc-recuperacao-overlay" aria-hidden="true">
+            <div class="gc-rec-modal" role="dialog" aria-modal="true" aria-labelledby="gc-recuperacao-titulo">
+              <h2 id="gc-recuperacao-titulo">🔐 Recuperar minha conta</h2>
+              <p>Perdeu o celular ou o número? Informe o e-mail que estava cadastrado. Enviaremos um link seguro para recuperar seu cadastro.</p>
+              <label for="gc-recuperacao-email">E-mail cadastrado</label>
+              <input id="gc-recuperacao-email" type="email" maxlength="160" autocomplete="email" placeholder="seuemail@exemplo.com">
+              <div id="gc-recuperacao-msg"></div>
+              <div class="gc-rec-acoes">
+                <button type="button" id="gc-recuperacao-fechar">Fechar</button>
+                <button type="button" class="gc-rec-principal" id="gc-recuperacao-enviar">Enviar link</button>
+              </div>
+            </div>
+          </div>
+
+          <script id="recuperacao-conta-cliente-script">
+          (function(){
+            var PHONE_KEY="gleison_telefone";
+            var NAME_KEY="gleison_nome";
+            var EMAIL_KEY="gleison_email";
+
+            function getSB(){
+              try{
+                if(typeof supabaseClient!=="undefined" && supabaseClient) return supabaseClient;
+              }catch(e){}
+              return window.supabaseClient||null;
+            }
+            function digits(v){return String(v||"").replace(/\D/g,"");}
+            function fmtPhone(v){
+              var d=digits(v).slice(0,11);
+              if(d.length<=2)return d;
+              if(d.length<=7)return "("+d.slice(0,2)+") "+d.slice(2);
+              return "("+d.slice(0,2)+") "+d.slice(2,7)+"-"+d.slice(7);
+            }
+            function saveLocal(c){
+              try{
+                localStorage.setItem(NAME_KEY,c.nome||"");
+                localStorage.setItem(PHONE_KEY,c.telefone||"");
+                localStorage.setItem(EMAIL_KEY,c.email||"");
+              }catch(e){}
+            }
+            function setMsg(text,cls){
+              var el=document.getElementById("gc-recuperacao-msg");
+              if(el){el.textContent=text||"";el.className=cls||"gc-rec-info";}
+            }
+            function abrir(){
+              var el=document.getElementById("gc-recuperacao-overlay");
+              if(el){el.classList.add("aberto");el.setAttribute("aria-hidden","false");}
+              var inp=document.getElementById("gc-recuperacao-email");
+              if(inp){inp.value=(localStorage.getItem(EMAIL_KEY)||"");setTimeout(function(){inp.focus();},80);}
+              setMsg("","");
+            }
+            function fechar(){
+              var el=document.getElementById("gc-recuperacao-overlay");
+              if(el){el.classList.remove("aberto");el.setAttribute("aria-hidden","true");}
+            }
+
+            async function concluirRecuperacao(){
+              var sb=getSB();
+              if(!sb || !sb.auth)return;
+              try{
+                var sess=await sb.auth.getSession();
+                var session=sess && sess.data ? sess.data.session : null;
+                if(!session || !session.user || !session.user.email)return;
+
+                var r=await sb.rpc("recuperar_conta_cliente_logado");
+                if(r.error)throw r.error;
+                var c=Array.isArray(r.data)?(r.data[0]||null):r.data;
+                if(!c)throw new Error("Não encontramos um cadastro de cliente com este e-mail.");
+
+                saveLocal({
+                  nome:c.nome||"",
+                  telefone:c.telefone||"",
+                  email:c.email||session.user.email
+                });
+
+                fechar();
+                var cadastro=document.getElementById("gc-cadastro-overlay");
+                if(cadastro){cadastro.classList.remove("aberto");cadastro.setAttribute("aria-hidden","true");}
+
+                if(typeof window.location!=="undefined"){
+                  window.location.replace(window.location.pathname+"?recuperado="+Date.now());
+                }
+              }catch(e){
+                console.error("Recuperação de conta:",e);
+                setMsg(e.message||"Não foi possível recuperar sua conta.","gc-rec-erro");
+                try{await sb.auth.signOut();}catch(_){}
+              }
+            }
+
+            async function enviarLink(){
+              var btn=document.getElementById("gc-recuperacao-enviar");
+              var email=(document.getElementById("gc-recuperacao-email")||{}).value||"";
+              email=email.trim().toLowerCase();
+              if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+                setMsg("Digite um e-mail válido.","gc-rec-erro");
+                return;
+              }
+              var sb=getSB();
+              if(!sb || !sb.auth){
+                setMsg("Sistema ainda está carregando. Tente novamente.","gc-rec-erro");
+                return;
+              }
+              btn.disabled=true;
+              setMsg("Enviando o link de recuperação...","gc-rec-info");
+              try{
+                var redirectTo=window.location.href.split("#")[0].split("?")[0];
+                var r=await sb.auth.signInWithOtp({
+                  email:email,
+                  options:{
+                    shouldCreateUser:true,
+                    emailRedirectTo:redirectTo
+                  }
+                });
+                if(r.error)throw r.error;
+                setMsg("Link enviado. Abra o e-mail e toque no link para recuperar sua conta.","gc-rec-ok");
+                btn.disabled=false;
+              }catch(e){
+                console.error("Envio de recuperação:",e);
+                setMsg(e.message||"Não foi possível enviar o link. Verifique o e-mail e tente novamente.","gc-rec-erro");
+                btn.disabled=false;
+              }
+            }
+
+            function adicionarLinkRecuperacao(){
+              var cadastro=document.getElementById("gc-cadastro-overlay");
+              if(cadastro && !document.getElementById("gc-abrir-recuperacao-cadastro")){
+                var b=document.createElement("button");
+                b.id="gc-abrir-recuperacao-cadastro";
+                b.type="button";
+                b.className="gc-rec-link";
+                b.textContent="🔐 Já sou cliente e perdi meu acesso";
+                b.addEventListener("click",function(){abrir();});
+                var acoes=cadastro.querySelector(".gc-acoes");
+                if(acoes)acoes.parentNode.appendChild(b);
+              }
+
+              var perfil=document.querySelector("#gc-perfil-overlay .gc-acoes");
+              if(perfil && !document.getElementById("gc-abrir-recuperacao-perfil")){
+                var b2=document.createElement("button");
+                b2.id="gc-abrir-recuperacao-perfil";
+                b2.type="button";
+                b2.className="gc-rec-link";
+                b2.textContent="🔐 Recuperar acesso pelo e-mail";
+                b2.addEventListener("click",function(){abrir();});
+                perfil.parentNode.appendChild(b2);
+              }
+            }
+
+            function ligar(){
+              var enviar=document.getElementById("gc-recuperacao-enviar");
+              if(enviar)enviar.addEventListener("click",enviarLink);
+              var fecharBtn=document.getElementById("gc-recuperacao-fechar");
+              if(fecharBtn)fecharBtn.addEventListener("click",fechar);
+              var ov=document.getElementById("gc-recuperacao-overlay");
+              if(ov)ov.addEventListener("click",function(e){if(e.target===ov)fechar();});
+              adicionarLinkRecuperacao();
+
+              var sb=getSB();
+              if(sb && sb.auth){
+                sb.auth.onAuthStateChange(function(event){
+                  if(event==="SIGNED_IN" || event==="INITIAL_SESSION"){
+                    setTimeout(concluirRecuperacao,250);
+                  }
+                });
+                setTimeout(concluirRecuperacao,700);
+              }
+            }
+
+            if(document.readyState==="loading"){
+              document.addEventListener("DOMContentLoaded",function(){setTimeout(ligar,700);});
+            }else{
+              setTimeout(ligar,700);
+            }
+          })();
+          </script>
+          '''
+
+          if 'id="recuperacao-conta-cliente-style"' not in s and "</body>" in s:
+              s=s.replace("</body>",code+"</body>",1)
+
+          p.write_text(s,encoding="utf-8")
+          print("Recuperação de conta do cliente adicionada.")
+          PY
+
+      - name: Validar recuperação de conta
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path("site/index.html").read_text(encoding="utf-8")
+          required=[
+            'id="recuperacao-conta-cliente-style"',
+            'id="gc-recuperacao-overlay"',
+            'signInWithOtp',
+            'recuperar_conta_cliente_logado',
+            'Já sou cliente e perdi meu acesso'
+          ]
+          missing=[x for x in required if x not in s]
+          if missing:
+              raise SystemExit("Validação falhou; faltando: "+", ".join(missing))
+          print("Validação da recuperação de conta OK.")
+          PY
+
+      - name: Marcar atendimentos encerrados
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path("site/index.html")
+          s=p.read_text(encoding="utf-8")
+
+          code=r'''
+          <style id="status-atendimento-online">
+          .atendimento-encerrado{border-color:rgba(220,53,69,.8)!important;box-shadow:0 0 0 2px rgba(220,53,69,.12) inset}
+          .status-encerrado{display:inline-flex!important;align-items:center;gap:6px;background:#dc3545!important;color:#fff!important}
+          .acoes-atendimento-encerrado{display:flex!important;gap:10px;flex-wrap:wrap;margin-top:12px}
+          .acoes-atendimento-encerrado button{border:1px solid rgba(255,255,255,.2);border-radius:10px;padding:10px 14px;background:#171b1f;color:#fff;font:700 14px Arial,sans-serif;cursor:pointer}
+          .status-final-atendido{background:#28a745!important;color:#fff!important}
+          .status-final-nao-compareceu{background:#dc3545!important;color:#fff!important}
+          </style>
+          <script id="status-atendimento-script">
+          (function(){
+            var KEY="gleison_status_atendimentos_v2";
+
+            function read(){
+              try{return JSON.parse(localStorage.getItem(KEY)||"{}");}
+              catch(e){return {};}
+            }
+            function write(v){
+              try{localStorage.setItem(KEY,JSON.stringify(v));}catch(e){}
+            }
+            function norm(v){return (v||"").replace(/\s+/g," ").trim();}
+
+            function getDate(text){
+              var m=norm(text).match(/(\d{2})\/(\d{2})\/(\d{4})\s*[•·]\s*(\d{2}):(\d{2})/);
+              if(!m)return null;
+              var d=new Date(+m[3],+m[2]-1,+m[1],+m[4],+m[5],0,0);
+              return isNaN(d.getTime())?null:d;
+            }
+
+            function getCards(){
+              var agenda=document.getElementById("agendaList");
+              if(!agenda)return [];
+              return Array.prototype.slice.call(agenda.querySelectorAll(".card")).filter(function(el){
+                var t=norm(el.innerText);
+                return /Cliente:\s*/i.test(t) &&
+                       /\b(?:Agendado|Confirmado)\b/i.test(t) &&
+                       /(Remarcar|Cancelar)/i.test(t) &&
+                       getDate(t);
+              });
+            }
+
+            function findStatus(card){
+              var nodes=Array.prototype.slice.call(card.querySelectorAll("button,span,strong,b,p,div"));
+              return nodes.find(function(el){
+                return /^(Agendado|Atendido|Não compareceu|Atendimento encerrado)$/i.test(norm(el.textContent));
+              });
+            }
+
+            function keyFor(card,dt){
+              var t=norm(card.innerText);
+              var nome=(t.match(/Cliente:\s*([^\n]+)/i)||[])[1]||"";
+              var serv=(t.match(/^\s*(Corte(?:\s*\+\s*Barba)?|Barba|Sobrancelha|Serviço)\s*$/im)||[])[1]||"";
+              return dt.getFullYear()+"-"+String(dt.getMonth()+1).padStart(2,"0")+"-"+String(dt.getDate()).padStart(2,"0")+"T"+String(dt.getHours()).padStart(2,"0")+":"+String(dt.getMinutes()).padStart(2,"0")+"|"+norm(nome)+"|"+norm(serv);
+            }
+
+            function process(){
+              var now=new Date(), saved=read();
+
+              getCards().forEach(function(card){
+                var dt=getDate(card.innerText);
+                if(!dt || dt>now)return;
+
+                var status=findStatus(card);
+                if(!status)return;
+
+                var current=norm(status.textContent);
+                if(/^Cancelado$/i.test(current))return;
+
+                var key=keyFor(card,dt);
+                var final=saved[key];
+
+                card.classList.add("atendimento-encerrado");
+
+                if(final==="atendido"){
+                  status.textContent="Atendido";
+                  status.classList.add("status-final-atendido");
+                  return;
+                }
+
+                if(final==="nao_compareceu"){
+                  status.textContent="Não compareceu";
+                  status.classList.add("status-final-nao-compareceu");
+                  return;
+                }
+
+                status.textContent="Atendimento encerrado";
+                status.classList.add("status-encerrado");
+
+                if(card.querySelector(".acoes-atendimento-encerrado"))return;
+
+                var box=document.createElement("div");
+                box.className="acoes-atendimento-encerrado";
+
+                var ok=document.createElement("button");
+                ok.type="button";
+                ok.textContent="✓ Atendido";
+
+                var no=document.createElement("button");
+                no.type="button";
+                no.textContent="✕ Não compareceu";
+
+                ok.onclick=function(){
+                  var d=read();d[key]="atendido";write(d);
+                  status.textContent="Atendido";
+                  status.classList.add("status-final-atendido");
+                  box.remove();
+                };
+
+                no.onclick=function(){
+                  var d=read();d[key]="nao_compareceu";write(d);
+                  status.textContent="Não compareceu";
+                  status.classList.add("status-final-nao-compareceu");
+                  box.remove();
+                };
+
+                box.appendChild(ok);
+                box.appendChild(no);
+                card.appendChild(box);
+              });
+            }
+
+            function start(){
+              process();
+              setInterval(process,30000);
+              // Não observar todo o body: alterações na própria agenda geram novas mutações e podem travar o WebView.
+            }
+
+            if(document.readyState==="loading"){
+              document.addEventListener("DOMContentLoaded",start);
+            }else{
+              start();
+            }
+          })();
+          </script>
+          '''
+
+          if 'id="status-atendimento-online"' in s:
+              import re
+              s=re.sub(r'<style id="status-atendimento-online">.*?</script>\s*', '', s, count=1, flags=re.S)
+          if "</body>" in s:
+              s=s.replace("</body>",code+"</body>",1)
+
+          p.write_text(s,encoding="utf-8")
+          print("Regra de encerramento corrigida.")
+          PY
+
+      - name: Corrigir ordenação da Minha agenda
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p=Path("site/index.html")
+          s=p.read_text(encoding="utf-8")
+
+          # Remove qualquer versão anterior do organizador.
+          s=re.sub(r'\s*<script id="ordenacao-minha-agenda-script">.*?</script>\s*', '\n', s, count=0, flags=re.S)
+
+          code=r'''
+          <script id="ordenacao-minha-agenda-script">
+          (function(){
+            function norm(v){return (v||"").replace(/\s+/g," ").trim();}
+
+            function getDate(text){
+              var m=norm(text).match(/(\d{2})\/(\d{2})\/(\d{4})\s*[•·]\s*(\d{2}):(\d{2})/);
+              if(!m)return null;
+              var d=new Date(+m[3],+m[2]-1,+m[1],+m[4],+m[5],0,0);
+              return isNaN(d.getTime())?null:d;
+            }
+
+            function getCards(){
+              var list=document.getElementById("agendaList");
+              if(!list)return [];
+              return Array.prototype.slice.call(list.querySelectorAll(".card")).filter(function(card){
+                var t=norm(card.innerText);
+                return getDate(t) && /Cliente:\s*/i.test(t);
+              });
+            }
+
+            function status(card){
+              var t=norm(card.innerText).toLowerCase();
+              var dt=getDate(t);
+              var futuro=dt && dt.getTime()>=Date.now();
+              if((/\bagendado\b/.test(t)||/\bconfirmado\b/.test(t)) && futuro)return 0;
+              if(/\batendido\b/.test(t)||/\batendimento encerrado\b/.test(t))return 1;
+              if(/\bnão compareceu\b/.test(t)||/\bfaltou\b/.test(t))return 2;
+              if(/\bcancelado\b/.test(t))return 3;
+              if(/\bagendado\b/.test(t)||/\bconfirmado\b/.test(t))return 1;
+              return 4;
+            }
+
+            function sort(){
+              var cards=getCards();
+              if(cards.length<2)return;
+              var parent=cards[0].parentElement;
+              if(!parent)return;
+              cards=cards.filter(function(card){return card.parentElement===parent;});
+
+              cards.sort(function(a,b){
+                var sa=status(a), sb=status(b);
+                if(sa!==sb)return sa-sb;
+                var da=getDate(a.innerText), db=getDate(b.innerText);
+                var ta=da?da.getTime():Number.MAX_SAFE_INTEGER;
+                var tb=db?db.getTime():Number.MAX_SAFE_INTEGER;
+                return ta-tb;
+              });
+
+              var atual=Array.prototype.slice.call(parent.children).filter(function(el){
+                return cards.indexOf(el)>=0;
+              });
+              var mudou=atual.length!==cards.length || atual.some(function(el,i){return el!==cards[i];});
+              if(!mudou)return;
+              var frag=document.createDocumentFragment();
+              cards.forEach(function(card){frag.appendChild(card);});
+              parent.appendChild(frag);
+            }
+
+            function start(){
+              // Existe código antigo no HTML que também pode tentar ordenar a lista.
+              // O protetor roda após o carregamento e periodicamente, mas só move
+              // os cards quando a ordem estiver realmente errada.
+              sort();
+              setTimeout(sort,500);
+              setTimeout(sort,1500);
+              setInterval(sort,1000);
+            }
+
+            if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",start);
+            else start();
+          })();
+          </script>
+          '''
+
+          if "</body>" in s:
+              s=s.replace("</body>",code+"</body>",1)
+
+          p.write_text(s,encoding="utf-8")
+          print("Ordenação completa da Minha agenda aplicada.")
+          PY
+
+      - name: Validar ordenação
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          s=Path("site/index.html").read_text(encoding="utf-8")
+          if s.count('id="ordenacao-minha-agenda-script"') != 1:
+              raise SystemExit("Script de ordenação não está presente exatamente uma vez.")
+          if "Remarcar" not in s or "Cancelar" not in s:
+              raise SystemExit("Estrutura esperada da agenda não encontrada.")
+          PY
+      - name: Validar alterações do sistema
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          s = Path("site/index.html").read_text(encoding="utf-8")
+          required = [
+              'id="btn-atualizar-online"',
+              'id="menu-tres-pontos-online"',
+              'data-menu-acao="perfil"',
+              'data-menu-acao="notificacoes"',
+              'data-menu-acao="administrador"',
+          ]
+          missing = [x for x in required if x not in s]
+          if missing:
+              raise SystemExit("Validação falhou; faltando: " + ", ".join(missing))
+          if s.count('id="menu-tres-pontos-online"') != 1:
+              raise SystemExit("Validação falhou: menu duplicado.")
+          menu_scripts = re.findall(r'<script[^>]*id="menu-tres-pontos-script"[^>]*>(.*?)</script>', s, flags=re.S|re.I)
+          if len(menu_scripts) != 1:
+              raise SystemExit("Validação falhou: script do menu não encontrado exatamente uma vez.")
+          Path("/tmp/menu-check.js").write_text(menu_scripts[0], encoding="utf-8")
+          PY
+          node --check /tmp/menu-check.js
+          test -s site/index.html
+          test -s site/admin.html
+          echo "Validação concluída: estrutura e sintaxe JavaScript OK."
+
+      - name: Corrigir carregamento da Minha agenda
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path("site/index.html")
+          s=p.read_text(encoding="utf-8")
+
+          code=r'''
+          <style id="agenda-carregamento-online-style">
+          .status-atendimento-encerrado{border-color:rgba(220,53,69,.8)!important;box-shadow:0 0 0 2px rgba(220,53,69,.12) inset}
+          .agenda-status-cancelado{background:#e53955!important;color:#fff!important;border-color:#e53955!important}
+          .agenda-status-agendado{background:#f2c14e!important;color:#171717!important;border-color:#f2c14e!important}
+          .agenda-status-atendido{background:#4dcc83!important;color:#171717!important;border-color:#4dcc83!important}
+          </style>
+          <script id="agenda-carregamento-online">
+          (function(){
+            function parseDate(v){
+              var m=String(v||"").match(/(\d{2})\/(\d{2})\/(\d{4})\s*[•·]\s*(\d{2}):(\d{2})/);
+              if(!m)return null;
+              var d=new Date(+m[3],+m[2]-1,+m[1],+m[4],+m[5],0,0);
+              return isNaN(d.getTime())?null:d;
+            }
+
+            function dataHoraAgenda(a){
+              var raw=a && a.data_hora;
+              var ms=raw ? new Date(raw).getTime() : NaN;
+              if(Number.isFinite(ms))return new Date(ms);
+              return parseDate(typeof formatDateTime==="function"?formatDateTime(raw):"");
+            }
+
+            function statusFinal(a){
+              var raw=String(a.status||"agendado").toLowerCase().trim();
+              var dt=dataHoraAgenda(a);
+              if(dt && dt.getTime()<Date.now() && raw!=="cancelado" && raw!=="atendido" && raw!=="faltou" && raw!=="não compareceu"){
+                return "Atendimento encerrado";
+              }
+              return typeof statusLabel==="function" ? statusLabel(a.status) : (a.status||"Agendado");
+            }
+
+            window.loadMyAgenda=async function(){
+              var list=document.getElementById("agendaList");
+              if(!list)return;
+
+              var telefone=(localStorage.getItem("gleison_telefone")||"").trim();
+              if(!telefone){
+                list.innerHTML='<div class="card"><b>Nenhum agendamento encontrado</b><div class="small" style="margin-top:6px">Faça um agendamento primeiro. Seus próximos horários aparecerão aqui.</div></div>';
+                return;
+              }
+
+              list.innerHTML='<div class="card"><div class="small">Carregando sua agenda...</div></div>';
+
+              try{
+                var resultado=await Promise.race([
+                  supabaseClient.rpc("listar_agendamentos_cliente",{p_telefone:telefone}),
+                  new Promise(function(_,reject){
+                    setTimeout(function(){reject(new Error("TIMEOUT_AGENDA"));},12000);
+                  })
+                ]);
+
+                if(resultado.error)throw resultado.error;
+
+                var data=Array.isArray(resultado.data)?resultado.data:[];
+                data.sort(function(a,b){
+                  function ordem(item){
+                    var st=statusFinal(item).toLowerCase();
+                    var raw=String(item.status||"").toLowerCase().trim();
+                    var dt=dataHoraAgenda(item);
+                    var futuro=dt && dt.getTime()>=Date.now();
+
+                    // Próximos agendamentos/confirmados sempre ficam primeiro.
+                    if((raw==="agendado"||raw==="confirmado") && futuro)return 0;
+
+                    // Atendimentos encerrados ficam depois dos próximos.
+                    if(st==="atendimento encerrado"||st==="atendido")return 1;
+
+                    // Faltou/não compareceu ficam no histórico.
+                    if(st==="faltou"||st==="não compareceu")return 2;
+
+                    // Cancelados ficam por último.
+                    if(st==="cancelado")return 3;
+
+                    // Agendamentos que já passaram também são histórico.
+                    if(raw==="agendado"||raw==="confirmado")return 1;
+
+                    return 4;
+                  }
+                  var oa=ordem(a),ob=ordem(b);
+                  if(oa!==ob)return oa-ob;
+                  var da=dataHoraAgenda(a),db=dataHoraAgenda(b);
+                  var ta=da?da.getTime():Number.MAX_SAFE_INTEGER;
+                  var tb=db?db.getTime():Number.MAX_SAFE_INTEGER;
+                  return ta-tb;
+                });
+
+                if(!data.length){
+                  list.innerHTML='<div class="card"><b>Nenhum agendamento</b><div class="small" style="margin-top:6px">Não há horários cadastrados para este telefone.</div></div>';
+                  return;
+                }
+
+                list.innerHTML=data.map(function(a){
+                  var st=statusFinal(a);
+                  var cls=st==="Atendimento encerrado"?" status-atendimento-encerrado":"";
+                  var statusCor=String(st||"").toLowerCase();
+                  var estiloBadge=statusCor==="cancelado"?' style="background:#e53955!important;color:#fff!important;border-color:#e53955!important"':((statusCor==="agendado"||statusCor==="confirmado")?' style="background:#f2c14e!important;color:#171717!important;border-color:#f2c14e!important"':(statusCor==="atendido"?' style="background:#4dcc83!important;color:#171717!important;border-color:#4dcc83!important"':''));
+                  var dataAgendamento=dataHoraAgenda(a);
+                  var ativoStatus=(String(a.status||"").toLowerCase()==="agendado" || String(a.status||"").toLowerCase()==="confirmado");
+                  var ativo=ativoStatus && dataAgendamento && dataAgendamento.getTime()>=Date.now();
+                  var botoes=ativo ?
+                    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">'+
+                    '<button class="btn secondary" style="padding:10px" type="button" onclick="openReschedule(\\''+escapeHtml(a.id)+'\\',\\''+escapeHtml(a.data_hora)+'\\')">Remarcar</button>'+
+                    '<button class="btn secondary" style="padding:10px" type="button" onclick="cancelAppointment(\\''+escapeHtml(a.id)+'\\')">Cancelar</button>'+
+                    '</div>' : '';
+                  return '<div class="card'+cls+'">'+
+                    '<div class="small">'+escapeHtml(formatDateTime(a.data_hora))+'</div>'+
+                    '<b style="display:block;margin-top:5px">'+escapeHtml(a.servico||a.observacoes||"Serviço")+'</b>'+
+                    '<div class="small" style="margin-top:6px">Cliente: '+escapeHtml(a.cliente_nome||"Cliente")+'</div>'+
+                    '<div style="margin-top:8px"><span'+estiloBadge+'>'+escapeHtml(st)+'</span></div>'+
+                    botoes+
+                  '</div>';
+                }).join("");
+              }catch(error){
+                console.error("Erro ao carregar agenda:",error);
+                list.innerHTML='<div class="card"><b>Não foi possível carregar a agenda.</b><div class="small" style="margin-top:6px">A conexão demorou para responder. Toque em Atualizar para tentar novamente.</div><button class="btn secondary" style="margin-top:10px;width:100%" type="button" onclick="loadMyAgenda()">↻ Tentar novamente</button></div>';
+              }
+            };
+
+            window.atualizarAgendaClienteAgora=async function(btn){
+              if(btn){
+                btn.disabled=true;
+                btn.textContent="↻ Atualizando...";
+              }
+
+              try{
+                if(typeof window.loadMyAgenda==="function"){
+                  await window.loadMyAgenda();
+                }
+                if(typeof window.loadNotifications==="function"){
+                  try{ await window.loadNotifications(); }catch(e){}
+                }
+                if(btn){
+                  btn.textContent="✓ Atualizado";
+                  setTimeout(function(){
+                    btn.disabled=false;
+                    btn.textContent="↻ Atualizar";
+                  },900);
+                }
+              }catch(e){
+                console.error("Erro ao atualizar sem recarregar o app:",e);
+                if(btn){
+                  btn.disabled=false;
+                  btn.textContent="↻ Atualizar";
+                }
+              }
+            };
+
+            function ligarBotao(){
+              var b=document.getElementById("btn-atualizar-online");
+              if(b){
+                b.onclick=function(){
+                  window.atualizarAgendaClienteAgora(b);
+                };
+              }
+            }
+
+            if(document.readyState==="loading"){
+              document.addEventListener("DOMContentLoaded",ligarBotao);
+            }else{
+              ligarBotao();
+            }
+          })();
+          </script>
+          '''
+
+          if 'id="agenda-carregamento-online"' not in s and "</body>" in s:
+              s=s.replace("</body>",code+"\n</body>",1)
+
+          p.write_text(s,encoding="utf-8")
+          print("Carregamento da Minha agenda corrigido.")
+          PY
+
+      - name: Fixar fuso de São Paulo no navegador
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("site/index.html")
+          s=p.read_text(encoding="utf-8")
+
+          code=r'''
+          <script id="fuso-sao-paulo-online">
+          (function(){
+            var TZ="America/Sao_Paulo";
+            function dataLocalSP(v){
+              if(v==null||v==="")return null;
+              var d=new Date(v);
+              return Number.isNaN(d.getTime())?null:d;
+            }
+            function formatarSP(v){
+              var d=dataLocalSP(v);
+              if(!d)return "Data não disponível";
+              var parts=new Intl.DateTimeFormat("pt-BR",{timeZone:TZ,day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit",hour12:false}).formatToParts(d);
+              var x={}; parts.forEach(function(p){x[p.type]=p.value});
+              return x.day+"/"+x.month+"/"+x.year+" às "+x.hour+":"+x.minute;
+            }
+            window.gleisonFormatDateTimeSP=formatarSP;
+            window.gleisonFormatDateSP=function(v){
+              var d=dataLocalSP(v);
+              if(!d)return "Data não disponível";
+              return new Intl.DateTimeFormat("pt-BR",{timeZone:TZ,day:"2-digit",month:"2-digit",year:"numeric"}).format(d);
+            };
+            window.gleisonFormatTimeSP=function(v){
+              var d=dataLocalSP(v);
+              if(!d)return "";
+              return new Intl.DateTimeFormat("pt-BR",{timeZone:TZ,hour:"2-digit",minute:"2-digit",hour12:false}).format(d);
+            };
+            function aplicar(){
+              try{
+                if(typeof window.formatDateTime==="function")window.formatDateTime=formatarSP;
+              }catch(e){}
+            }
+            aplicar();
+            setTimeout(aplicar,300);
+            setTimeout(aplicar,1000);
+          })();
+          </script>
+          '''
+          if 'id="fuso-sao-paulo-online"' not in s and "</body>" in s:
+              s=s.replace("</body>",code+"</body>",1)
+          p.write_text(s,encoding="utf-8")
+          print("Fuso São Paulo fixado no navegador.")
+          PY
+
+      - name: Exigir serviço antes de confirmar agendamento
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p=Path("site/index.html")
+          s=p.read_text(encoding="utf-8")
+
+          code=r'''
+          <script id="validar-servico-agendamento-online">
+          (function(){
+            function validar(){
+              var fn=window.confirmBooking;
+              if(typeof fn!=="function" || fn.__servicoObrigatorio)return;
+
+              async function confirmBookingComServico(){
+                var select=document.getElementById("service");
+                var servico=select ? String(select.value||"").trim() : "";
+
+                if(!servico){
+                  if(typeof window.showToast==="function"){
+                    window.showToast("Escolha um serviço antes de confirmar o agendamento.");
+                  }else{
+                    alert("Escolha um serviço antes de confirmar o agendamento.");
+                  }
+                  if(select){
+                    select.focus();
+                    select.style.borderColor="#dc3545";
+                    setTimeout(function(){select.style.borderColor="";},1800);
+                  }
+                  return;
+                }
+
+                return fn.apply(this,arguments);
+              }
+
+              confirmBookingComServico.__servicoObrigatorio=true;
+              window.confirmBooking=confirmBookingComServico;
+            }
+
+            if(document.readyState==="loading"){
+              document.addEventListener("DOMContentLoaded",function(){
+                setTimeout(validar,100);
+                setTimeout(validar,800);
+              });
+            }else{
+              setTimeout(validar,100);
+              setTimeout(validar,800);
+            }
+          })();
+          </script>
+          '''
+
+          if 'id="validar-servico-agendamento-online"' not in s and "</body>" in s:
+              s=s.replace("</body>",code+"</body>",1)
+
+          p.write_text(s,encoding="utf-8")
+          print("Validação de serviço obrigatório adicionada.")
+          PY
+
+      - name: Validar serviço obrigatório
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path("site/index.html").read_text(encoding="utf-8")
+          for x in ['id="validar-servico-agendamento-online"','Escolha um serviço antes de confirmar o agendamento.']:
+              if x not in s:
+                  raise SystemExit("Validação falhou; faltando: "+x)
+          print("Validação de serviço obrigatório OK.")
+          PY
+
+      - name: Aplicar mesmas regras na agenda do administrador
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("site/index.html")
+          s=p.read_text(encoding="utf-8")
+
+          code=r'''
+          <style id="admin-agenda-regras-style">
+          .admin-atendimento-encerrado{border-color:rgba(220,53,69,.82)!important;box-shadow:0 0 0 2px rgba(220,53,69,.12) inset}
+          .admin-status-encerrado{background:#dc3545!important;color:#fff!important}
+          </style>
+          <script id="admin-agenda-regras-script">
+          (function(){
+            function norm(v){return (v||"").replace(/\s+/g," ").trim();}
+            function getDate(text){
+              var m=norm(text).match(/(\d{2})\/(\d{2})\/(\d{4})\s*[\u2022\u00b7]\s*(\d{2}):(\d{2})/);
+              if(!m)return null;
+              var d=new Date(+m[3],+m[2]-1,+m[1],+m[4],+m[5],0,0);
+              return isNaN(d.getTime())?null:d;
+            }
+            function isAdminVisible(){
+              var body=norm(document.body.innerText).toLowerCase();
+              return body.includes("painel administrativo") ||
+                     body.includes("administração") ||
+                     body.includes("administrador") ||
+                     body.includes("agenda do administrador") ||
+                     body.includes("agenda administrativa");
+            }
+            function findCards(){
+              var dateNodes=Array.prototype.slice.call(document.querySelectorAll("body *")).filter(function(el){
+                return /(\d{2})\/(\d{2})\/(\d{4})\s*[\u2022\u00b7]\s*(\d{2}):(\d{2})/.test(norm(el.textContent));
+              });
+              var cards=[];
+              dateNodes.forEach(function(node){
+                var el=node;
+                for(var i=0;i<8 && el;i++,el=el.parentElement){
+                  var t=norm(el.innerText);
+                  if(getDate(t) && /Cliente\s*:/i.test(t) &&
+                     /(Agendado|Cancelado|Atendimento encerrado|Atendido|Não compareceu)/i.test(t)){
+                    var r=el.getBoundingClientRect();
+                    if(r.width>200 && r.height>70 && cards.indexOf(el)<0)cards.push(el);
+                    break;
+                  }
+                }
+              });
+              return cards;
+            }
+            function status(card){
+              var t=norm(card.innerText);
+              if(/\bAgendado\b/i.test(t))return 0;
+              if(/\bAtendimento encerrado\b/i.test(t))return 1;
+              if(/\bAtendido\b/i.test(t))return 2;
+              if(/\bNão compareceu\b/i.test(t))return 3;
+              if(/\bCancelado\b/i.test(t))return 4;
+              return 5;
+            }
+            function markPast(card){
+              var dt=getDate(card.innerText);
+              if(!dt || dt.getTime()>Date.now())return;
+              var t=norm(card.innerText);
+              if(/\bCancelado\b/i.test(t) || /\bAtendido\b/i.test(t) || /\bNão compareceu\b/i.test(t))return;
+              if(!/\bAgendado\b/i.test(t))return;
+
+              card.classList.add("admin-atendimento-encerrado");
+
+              var nodes=Array.prototype.slice.call(card.querySelectorAll("span,b,strong,p,div"));
+              var badge=nodes.find(function(el){
+                return /^Agendado$/i.test(norm(el.textContent));
+              });
+              if(badge){
+                badge.textContent="Atendimento encerrado";
+                badge.classList.add("admin-status-encerrado");
+              }
+            }
+            function sort(){
+              if(!isAdminVisible())return;
+              var cards=findCards();
+              cards.forEach(markPast);
+
+              var groups=[];
+              cards.forEach(function(card){
+                var parent=card.parentElement;
+                if(!parent)return;
+                var g=groups.find(function(x){return x.parent===parent;});
+                if(!g){g={parent:parent,cards:[]};groups.push(g);}
+                g.cards.push(card);
+              });
+
+              groups.forEach(function(g){
+                if(g.cards.length<2)return;
+                g.cards.sort(function(a,b){
+                  var sa=status(a), sb=status(b);
+                  if(sa!==sb)return sa-sb;
+                  var da=getDate(a.innerText), db=getDate(b.innerText);
+                  var ta=da?da.getTime():Number.MAX_SAFE_INTEGER;
+                  var tb=db?db.getTime():Number.MAX_SAFE_INTEGER;
+                  return ta-tb;
+                });
+                var frag=document.createDocumentFragment();
+                g.cards.forEach(function(card){frag.appendChild(card);});
+                g.parent.appendChild(frag);
+              });
+            }
+            function start(){
+              sort();
+              setTimeout(sort,500);
+              setTimeout(sort,1500);
+              setInterval(sort,30000);
+              // A agenda administrativa também é atualizada pelo intervalo; evitar MutationObserver para não gerar loop.
+            }
+            if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",start);
+            else start();
+          })();
+          </script>
+          '''
+          if 'id="admin-agenda-regras-script"' not in s and "</body>" in s:
+              s=s.replace("</body>",code+"</body>",1)
+          p.write_text(s,encoding="utf-8")
+          print("Regras da Minha agenda aplicadas também ao administrador.")
+          PY
+
+      - name: Validar regras do administrador
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path("site/index.html").read_text(encoding="utf-8")
+          required=[
+            'id="admin-agenda-regras-script"',
+            'admin-atendimento-encerrado',
+            'admin-status-encerrado',
+            'Cancelado'
+          ]
+          missing=[x for x in required if x not in s]
+          if missing:
+              raise SystemExit("Validação falhou; faltando: "+", ".join(missing))
+          if s.count('id="admin-agenda-regras-script"') != 1:
+              raise SystemExit("Script do administrador duplicado.")
+          print("Validação das regras do administrador OK.")
+          PY
+
+      - name: Investigar área administrativa do projeto
+        run: |
+          echo "=== ARQUIVOS DO PROJETO ==="
+          find GleisonBarbeariaAndroid/app/src/main/assets -maxdepth 2 -type f -print | sort
+          echo "=== TERMOS ADMINISTRATIVOS NO CÓDIGO ==="
+          grep -RniE "admin|administr|painel|senha|password|gestor" GleisonBarbeariaAndroid/app/src/main/assets --exclude='*.png' --exclude='*.jpg' --exclude='*.jpeg' --exclude='*.webp' | head -200 || true
+
+      - name: Investigar seleção de serviço
+        run: |
+          echo "=== ELEMENTOS DE SERVIÇO E AGENDAMENTO ==="
+          grep -niE "servi[cç]o|selecion.*servi|escolh.*servi|agendar|agendamento|continuar|pr[oó]ximo|confirmar" GleisonBarbeariaAndroid/app/src/main/assets/index.html | head -250 || true
+
+      - name: Forçar cores dos status da agenda
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path("site/index.html")
+          s=p.read_text(encoding="utf-8")
+
+          code=r'''
+          <style id="forcar-cores-status-agenda">
+          #agenda .badge.status-cor-agendado{background:#f2c14e!important;color:#171717!important;border-color:#f2c14e!important}
+          #agenda .badge.status-cor-cancelado{background:#e53955!important;color:#fff!important;border-color:#e53955!important}
+          #agenda .badge.status-cor-atendido{background:#4dcc83!important;color:#171717!important;border-color:#4dcc83!important}
+          </style>
+          <script id="forcar-cores-status-agenda-script">
+          (function(){
+            function aplicar(){
+              var badges=document.querySelectorAll("#agenda .badge");
+              badges.forEach(function(el){
+                var t=(el.textContent||"").replace(/\s+/g," ").trim().toLowerCase();
+                var desejada="";
+                if(t==="agendado"||t==="confirmado") desejada="status-cor-agendado";
+                else if(t==="cancelado") desejada="status-cor-cancelado";
+                else if(t==="atendido") desejada="status-cor-atendido";
+                var classes=["status-cor-agendado","status-cor-cancelado","status-cor-atendido"];
+                var atual=classes.find(function(c){return el.classList.contains(c);})||"";
+                if(atual===desejada)return;
+                classes.forEach(function(c){el.classList.remove(c);});
+                if(desejada)el.classList.add(desejada);
+              });
+            }
+            if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",aplicar);
+            else aplicar();
+            // Não observar o body: aplicar() altera classes dos próprios badges e o observer
+            // pode entrar em ciclo de mutações no Android WebView ao abrir Minha agenda.
+            setInterval(aplicar,1000);
+          })();
+          </script>
+          '''
+          if 'id="forcar-cores-status-agenda"' not in s and "</body>" in s:
+              s=s.replace("</body>",code+"</body>",1)
+          p.write_text(s,encoding="utf-8")
+          print("Cores dos status da agenda forçadas.")
+          PY
+
+
+      - name: Remover botão de perfil da barra inferior
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path("site/index.html")
+          s=p.read_text(encoding="utf-8")
+
+          code=r'''
+          <style id="remover-perfil-barra-inferior">
+          /* O perfil fica somente no menu dos três pontos. */
+          .nav-profile-hidden{display:none!important}
+          nav.nav .nav-account-stack{display:none!important}
+          </style>
+          <script id="remover-perfil-barra-inferior-script">
+          (function(){
+            function esconder(){
+              var itens=document.querySelectorAll("button, a, [role='button'], [onclick]");
+              Array.prototype.forEach.call(itens,function(el){
+                var t=(el.innerText||el.textContent||"").replace(/\s+/g," ").trim().toLowerCase();
+                var id=(el.id||"").toLowerCase();
+                var cls=String(el.className||"").toLowerCase();
+                var click=(el.getAttribute("onclick")||"").toLowerCase();
+                var aria=(el.getAttribute("aria-label")||"").toLowerCase();
+                var perfil=(t==="perfil" || t==="meu perfil" || /perfil|profile/.test(id+" "+cls+" "+aria+" "+click));
+                if(!perfil || el.closest("#menu-tres-pontos, #menu-tres-pontos-overlay, #gc-perfil-overlay, #gc-cadastro-overlay"))return;
+                var rect=el.getBoundingClientRect();
+                var pertoRodape=rect.top>window.innerHeight*0.70;
+                if(pertoRodape)el.classList.add("nav-profile-hidden");
+              });
+            }
+            if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",esconder);
+            else esconder();
+            setTimeout(esconder,500);
+            setTimeout(esconder,1500);
+            document.addEventListener("click",function(){setTimeout(esconder,100)},true);
+          })();
+          </script>
+          '''
+          if 'id="remover-perfil-barra-inferior"' not in s and "</body>" in s:
+              s=s.replace("</body>",code+"</body>",1)
+          p.write_text(s,encoding="utf-8")
+          print("Botão de perfil/barbearia removido da barra inferior; perfil permanece no menu dos três pontos.")
+          PY
+
+      - name: Usar somente recuperação de senha por e-mail
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p=Path("site/index.html")
+          s=p.read_text(encoding="utf-8")
+
+          # Remove a implementação experimental de biometria/passkey.
+          s=re.sub(r"<style[^>]*id=[\"']reconhecimento-biometrico-online-style[\"'][^>]*>.*?</style>\\s*", "", s, flags=re.S|re.I)
+          s=re.sub(r"<script[^>]*id=[\"']reconhecimento-biometrico-online-script[\"'][^>]*>.*?</script>\\s*", "", s, flags=re.S|re.I)
+
+          # Remove também a recuperação antiga por magic link/OTP, para impedir o e-mail "Your sign-in link".
+          def limpar_magic_link(m):
+              body=m.group(2)
+              if "signInWithOtp" in body or "gc-recuperacao-overlay" in body or "recuperacao-conta-cliente-script" in body:
+                  return ""
+              return m.group(0)
+          s=re.sub(r'(<script\b[^>]*>)(.*?)(</script>)', limpar_magic_link, s, flags=re.S|re.I)
+          # Segurança extra: se algum script antigo escapar, remova o script inteiro que contém a chamada OTP.
+          while "signInWithOtp" in s:
+              antes=len(s)
+              s=re.sub(r'<script\b[^>]*>.*?signInWithOtp.*?</script>\s*', '', s, count=1, flags=re.S|re.I)
+              if len(s)==antes:
+                  break
+          s=re.sub(r'<button\b[^>]*>[^<]*(?:Recuperar acesso pelo e-mail|Já sou cliente e perdi meu acesso)[^<]*</button>\s*', '', s, flags=re.S|re.I)
+          s=re.sub(r'<a\b[^>]*>[^<]*(?:Recuperar acesso pelo e-mail|Já sou cliente e perdi meu acesso)[^<]*</a>\s*', '', s, flags=re.S|re.I)
+
+          # Remove qualquer script adicional que tenha sido criado especificamente para passkey/biometria.
+          def limpar_script(m):
+              tag,body,end=m.group(1),m.group(2),m.group(3)
+              low=body.lower()
+              termos=("signInWithPasskey","registerPasskey","reconhecimento facial","recuperação por biometria","passkey")
+              if any(t.lower() in low for t in termos):
+                  return ""
+              return m.group(0)
+          s=re.sub(r'(<script\b[^>]*>)(.*?)(</script>)', limpar_script, s, flags=re.S|re.I)
+
+          # Remove botões/mensagens da biometria que eventualmente vieram do HTML original.
+          s=re.sub(r'<button\\b[^>]*>.*?Ativar recuperação por biometria.*?</button>\\s*', '', s, flags=re.S|re.I)
+          s=re.sub(r'<button\\b[^>]*>.*?Recuperar com reconhecimento facial.*?</button>\\s*', '', s, flags=re.S|re.I)
+          s=re.sub(r'<[^>]+>\\s*Este celular/navegador não oferece biometria por passkey\\.\\s*</[^>]+>\\s*', '', s, flags=re.S|re.I)
+
+          # Remove a versão anterior da recuperação por link/magic-link.
+          s=re.sub(r"<style[^>]*id=[\"']recuperacao-conta-cliente-style[\"'][^>]*>.*?</style>\\s*", "", s, flags=re.S|re.I)
+          s=re.sub(r"<div[^>]*id=[\"']gc-recuperacao-overlay[\"'][^>]*>.*?</div>\\s*</div>\\s*", "", s, count=1, flags=re.S|re.I)
+          s=re.sub(r"<script[^>]*id=[\"']recuperacao-conta-cliente-script[\"'][^>]*>.*?</script>\\s*", "", s, flags=re.S|re.I)
+
+          code=r'''
+          <style id="recuperacao-senha-email-style">
+          #gc-rec-senha-overlay,#gc-rec-senha-nova-overlay{position:fixed;inset:0;z-index:2147483647;display:none;align-items:center;justify-content:center;padding:18px;background:rgba(0,0,0,.72)}
+          #gc-rec-senha-overlay.aberto,#gc-rec-senha-nova-overlay.aberto{display:flex}
+          .gc-rec-senha-modal{width:min(430px,100%);max-height:90vh;overflow:auto;background:#11161a;color:#fff;border:1px solid rgba(242,193,78,.35);border-radius:22px;box-shadow:0 18px 50px rgba(0,0,0,.65);padding:22px}
+          .gc-rec-senha-modal h2{margin:0 0 8px;color:#f2c14e;font:800 24px Arial,sans-serif}
+          .gc-rec-senha-modal p{margin:0 0 18px;color:#c7ccd2;font:400 14px/1.45 Arial,sans-serif}
+          .gc-rec-senha-modal label{display:block;margin:12px 0 6px;color:#fff;font:700 13px Arial,sans-serif}
+          .gc-rec-senha-modal input{box-sizing:border-box;width:100%;border:1px solid rgba(255,255,255,.18);border-radius:12px;background:#171c20;color:#fff;padding:13px 14px;font:600 16px Arial,sans-serif;outline:none}
+          .gc-rec-senha-modal input:focus{border-color:#f2c14e;box-shadow:0 0 0 2px rgba(242,193,78,.12)}
+          .gc-rec-senha-acoes{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}
+          .gc-rec-senha-modal button{border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:13px 14px;background:#171c20;color:#fff;font:800 15px Arial,sans-serif;cursor:pointer}
+          .gc-rec-senha-modal button.principal{background:#f2c14e;color:#171717;border-color:#f2c14e}
+          .gc-rec-senha-modal button:disabled{opacity:.55;cursor:wait}
+          .gc-rec-senha-msg{min-height:18px;margin-top:10px;font:600 13px Arial,sans-serif}
+          .gc-rec-senha-ok{color:#4dcc83}.gc-rec-senha-erro{color:#ff667a}.gc-rec-senha-info{color:#c7ccd2}
+          .gc-rec-senha-link{display:block;width:100%;margin-top:12px;padding:10px 4px;background:transparent!important;border:0!important;color:#f2c14e!important;font:700 13px Arial,sans-serif!important;text-align:center;cursor:pointer}
+          </style>
+
+          <div id="gc-rec-senha-overlay" aria-hidden="true">
+            <div class="gc-rec-senha-modal" role="dialog" aria-modal="true" aria-labelledby="gc-rec-senha-titulo">
+              <h2 id="gc-rec-senha-titulo">🔐 Recuperar minha senha</h2>
+              <p>Digite o e-mail cadastrado. Você receberá um link para criar uma nova senha.</p>
+              <label for="gc-rec-senha-email">E-mail cadastrado</label>
+              <input id="gc-rec-senha-email" type="email" maxlength="160" autocomplete="email" placeholder="seuemail@exemplo.com">
+              <div id="gc-rec-senha-msg" class="gc-rec-senha-msg"></div>
+              <div class="gc-rec-senha-acoes">
+                <button type="button" id="gc-rec-senha-fechar">Fechar</button>
+                <button type="button" class="principal" id="gc-rec-senha-enviar">Enviar link</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="gc-rec-senha-nova-overlay" aria-hidden="true">
+            <div class="gc-rec-senha-modal" role="dialog" aria-modal="true" aria-labelledby="gc-rec-senha-nova-titulo">
+              <h2 id="gc-rec-senha-nova-titulo">🔑 Criar nova senha</h2>
+              <p>Escolha uma nova senha com pelo menos 8 caracteres.</p>
+              <label for="gc-rec-senha-nova">Nova senha</label>
+              <input id="gc-rec-senha-nova" type="password" minlength="8" autocomplete="new-password" placeholder="Nova senha">
+              <label for="gc-rec-senha-confirma">Confirmar nova senha</label>
+              <input id="gc-rec-senha-confirma" type="password" minlength="8" autocomplete="new-password" placeholder="Repita a senha">
+              <div id="gc-rec-senha-nova-msg" class="gc-rec-senha-msg"></div>
+              <div class="gc-rec-senha-acoes">
+                <button type="button" id="gc-rec-senha-nova-fechar">Cancelar</button>
+                <button type="button" class="principal" id="gc-rec-senha-salvar">Salvar nova senha</button>
+              </div>
+            </div>
+          </div>
+
+          <script id="recuperacao-senha-email-script">
+          (function(){
+            var PHONE_KEY="gleison_telefone";
+            var NAME_KEY="gleison_nome";
+            var EMAIL_KEY="gleison_email";
+
+            function sb(){try{return window.supabaseClient||supabaseClient||null}catch(e){return window.supabaseClient||null}}
+            function abrir(id){var e=document.getElementById(id);if(e){e.classList.add("aberto");e.setAttribute("aria-hidden","false")}}
+            function fechar(id){var e=document.getElementById(id);if(e){e.classList.remove("aberto");e.setAttribute("aria-hidden","true")}}
+            function msg(id,t,c){var e=document.getElementById(id);if(e){e.textContent=t||"";e.className="gc-rec-senha-msg "+(c||"gc-rec-senha-info")}}
+            function emailVal(){return String((document.getElementById("gc-rec-senha-email")||{}).value||"").trim().toLowerCase()}
+            function baseUrl(){return window.location.href.split("#")[0].split("?")[0]}
+
+            async function restaurarCadastro(){
+              var client=sb(); if(!client||!client.auth)return;
+              try{
+                var r=await client.rpc("recuperar_conta_cliente_logado");
+                if(r.error)throw r.error;
+                var c=Array.isArray(r.data)?(r.data[0]||null):r.data;
+                if(c){
+                  localStorage.setItem(NAME_KEY,c.nome||"");
+                  localStorage.setItem(PHONE_KEY,c.telefone||"");
+                  localStorage.setItem(EMAIL_KEY,c.email||"");
+                }
+              }catch(e){console.warn("Cadastro não restaurado após troca de senha:",e)}
+            }
+
+            async function enviar(){
+              var b=document.getElementById("gc-rec-senha-enviar");
+              var email=emailVal();
+              if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){msg("gc-rec-senha-msg","Digite um e-mail válido.","gc-rec-senha-erro");return}
+              var client=sb();
+              if(!client||!client.auth){msg("gc-rec-senha-msg","Sistema ainda está carregando. Tente novamente.","gc-rec-senha-erro");return}
+              b.disabled=true;
+              msg("gc-rec-senha-msg","Enviando o link de recuperação...","gc-rec-senha-info");
+              try{
+                var r=await client.auth.resetPasswordForEmail(email,{redirectTo:baseUrl()});
+                if(r.error)throw r.error;
+                msg("gc-rec-senha-msg","Link enviado. Abra o e-mail e toque em “Reset password” para criar a nova senha.","gc-rec-senha-ok");
+              }catch(e){
+                console.error("Recuperação de senha:",e);
+                msg("gc-rec-senha-msg",e.message||"Não foi possível enviar o link. Tente novamente.","gc-rec-senha-erro");
+              }finally{b.disabled=false}
+            }
+
+            async function salvarNovaSenha(){
+              var b=document.getElementById("gc-rec-senha-salvar");
+              var a=String((document.getElementById("gc-rec-senha-nova")||{}).value||"");
+              var c=String((document.getElementById("gc-rec-senha-confirma")||{}).value||"");
+              if(a.length<8){msg("gc-rec-senha-nova-msg","A senha precisa ter pelo menos 8 caracteres.","gc-rec-senha-erro");return}
+              if(a!==c){msg("gc-rec-senha-nova-msg","As senhas não são iguais.","gc-rec-senha-erro");return}
+              var client=sb();
+              if(!client||!client.auth){msg("gc-rec-senha-nova-msg","Sistema ainda está carregando. Tente novamente.","gc-rec-senha-erro");return}
+              b.disabled=true;
+              msg("gc-rec-senha-nova-msg","Salvando nova senha...","gc-rec-senha-info");
+              try{
+                var r=await client.auth.updateUser({password:a});
+                if(r.error)throw r.error;
+                await restaurarCadastro();
+                fechar("gc-rec-senha-nova-overlay");
+                msg("gc-rec-senha-msg","Senha alterada com sucesso! Seu cadastro continua salvo.","gc-rec-senha-ok");
+                setTimeout(function(){window.location.replace(baseUrl()+"?senha-atualizada="+Date.now())},900);
+              }catch(e){
+                console.error("Nova senha:",e);
+                msg("gc-rec-senha-nova-msg",e.message||"Não foi possível alterar a senha.","gc-rec-senha-erro");
+              }finally{b.disabled=false}
+            }
+
+            function abrirRecuperacao(){
+              var e=document.getElementById("gc-rec-senha-email");
+              if(e)e.value=localStorage.getItem(EMAIL_KEY)||"";
+              msg("gc-rec-senha-msg","","gc-rec-senha-info");
+              abrir("gc-rec-senha-overlay");
+            }
+
+            function adicionarLinks(){
+              var cadastro=document.getElementById("gc-cadastro-overlay");
+              if(cadastro && !document.getElementById("gc-abrir-rec-senha-cadastro")){
+                var b=document.createElement("button");
+                b.id="gc-abrir-rec-senha-cadastro";b.type="button";b.className="gc-rec-senha-link";
+                b.textContent="🔐 Esqueci minha senha";
+                b.addEventListener("click",abrirRecuperacao);
+                var a=cadastro.querySelector(".gc-acoes");
+                if(a)a.parentNode.appendChild(b);
+              }
+              var perfil=document.querySelector("#gc-perfil-overlay .gc-acoes");
+              if(perfil && !document.getElementById("gc-abrir-rec-senha-perfil")){
+                var b2=document.createElement("button");
+                b2.id="gc-abrir-rec-senha-perfil";b2.type="button";b2.className="gc-rec-senha-link";
+                b2.textContent="🔐 Esqueci minha senha";
+                b2.addEventListener("click",abrirRecuperacao);
+                perfil.parentNode.appendChild(b2);
+              }
+            }
+
+            function ligar(){
+              var send=document.getElementById("gc-rec-senha-enviar");
+              var close=document.getElementById("gc-rec-senha-fechar");
+              var save=document.getElementById("gc-rec-senha-salvar");
+              var close2=document.getElementById("gc-rec-senha-nova-fechar");
+              if(send)send.addEventListener("click",enviar);
+              if(close)close.addEventListener("click",function(){fechar("gc-rec-senha-overlay")});
+              if(save)save.addEventListener("click",salvarNovaSenha);
+              if(close2)close2.addEventListener("click",function(){fechar("gc-rec-senha-nova-overlay")});
+              var ov=document.getElementById("gc-rec-senha-overlay");
+              if(ov)ov.addEventListener("click",function(e){if(e.target===ov)fechar("gc-rec-senha-overlay")});
+              adicionarLinks();
+
+              var client=sb();
+              if(client&&client.auth){
+                client.auth.onAuthStateChange(function(event){
+                  if(event==="PASSWORD_RECOVERY"){
+                    setTimeout(function(){
+                      fechar("gc-rec-senha-overlay");
+                      msg("gc-rec-senha-nova-msg","","gc-rec-senha-info");
+                      abrir("gc-rec-senha-nova-overlay");
+                    },150);
+                  }
+                });
+              }
+              if(/[?&]code=|[?&]type=recovery/.test(window.location.search+window.location.hash)){
+                setTimeout(function(){
+                  var c=sb();
+                  if(c&&c.auth)getTimeout();
+                },500);
+              }
+            }
+
+            function getTimeout(){
+              var client=sb();
+              if(!client||!client.auth)return;
+              client.auth.getSession().then(function(r){
+                if(r.data&&r.data.session){
+                  fechar("gc-rec-senha-overlay");
+                  abrir("gc-rec-senha-nova-overlay");
+                }
+              }).catch(function(){});
+            }
+
+            if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",function(){setTimeout(ligar,500)});
+            else setTimeout(ligar,500);
+
+            window.gleisonAbrirRecuperacaoSenha=abrirRecuperacao;
+          })();
+          </script>
+          '''
+
+          s=s.replace("</body>",code+"</body>",1)
+          p.write_text(s,encoding="utf-8")
+
+          # Valida a presença da recuperação por senha e a ausência da biometria.
+          checks=[
+            'id="recuperacao-senha-email-style"',
+            'id="recuperacao-senha-email-script"',
+            'resetPasswordForEmail',
+            'updateUser({password:a})',
+            'Esqueci minha senha'
+          ]
+          for x in checks:
+              if x not in s: raise SystemExit("Faltando: "+x)
+          for x in ("signInWithPasskey","registerPasskey","signInWith"+"Otp","Ativar recuperação por biometria","Recuperar com reconhecimento facial","Recuperar acesso pelo e-mail","Já sou cliente e perdi meu acesso"):
+              if x in s: raise SystemExit("Biometria ainda presente: "+x)
+          print("Recuperação por senha via e-mail validada; biometria removida.")
+          PY
+
+      - name: Validar recuperação de senha
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path("site/index.html").read_text(encoding="utf-8")
+          required=[
+            'id="recuperacao-senha-email-style"',
+            'id="recuperacao-senha-email-script"',
+            'resetPasswordForEmail',
+            'PASSWORD_RECOVERY',
+            'updateUser({password:a})',
+            'Esqueci minha senha'
+          ]
+          missing=[x for x in required if x not in s]
+          if missing: raise SystemExit("Validação falhou: "+", ".join(missing))
+          forbidden=[
+            'signInWithPasskey',
+            'registerPasskey',
+            'Ativar recuperação por biometria',
+            'Recuperar com reconhecimento facial'
+          ]
+          found=[x for x in forbidden if x in s]
+          if found: raise SystemExit("Validação falhou; biometria encontrada: "+", ".join(found))
+          print("Recuperação de senha por e-mail OK.")
+          PY
+
+      - name: Configurar GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Criar pacote do site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './site'
+
+      - name: Publicar no GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
