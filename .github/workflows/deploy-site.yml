@@ -2275,5 +2275,5 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-# Publicação validada no novo repositório
+# Publicação validada no novo repositório - Pages habilitado
 # Logo disponível no branch main
