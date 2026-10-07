@@ -1,0 +1,28 @@
+name: Copy ZIP from source
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  copy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download source ZIP
+        run: |
+          curl -L --fail --retry 3 "https://raw.githubusercontent.com/trixluans23-droid/Gleison-barbearia-2.0/main/GleisonBarbearia_2.0_V27_FCM.zip" -o GleisonBarbearia_2.0_V27_FCM.zip
+          ls -lh GleisonBarbearia_2.0_V27_FCM.zip
+
+      - name: Commit ZIP
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add GleisonBarbearia_2.0_V27_FCM.zip
+          git diff --cached --quiet || git commit -m "Copy Gleison Barbearia 2.0 ZIP"
+          git push
