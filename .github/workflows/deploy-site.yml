@@ -2276,3 +2276,4 @@ jobs:
         uses: actions/deploy-pages@v4
 
 # Publicação validada no novo repositório
+# Logo disponível no branch main
