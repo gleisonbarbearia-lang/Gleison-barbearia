@@ -2274,3 +2274,5 @@ jobs:
       - name: Publicar no GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+# Publicação validada no novo repositório
