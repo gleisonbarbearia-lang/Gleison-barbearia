@@ -8,6 +8,8 @@ on:
       - 'GleisonBarbearia_2.0_V27_FCM.zip'
       - 'admin.html'
       - '.github/workflows/deploy-site.yml'
+      - '.github/workflows/build-apk.yml'
+      - 'GleisonBarbeariaAndroid/app/src/main/assets/index.html'
       - 'scripts/sincronizar_horarios_cliente.py'
       - 'scripts/adicionar_foto_perfil_cliente.py'
       - 'file_00000000418c820e9ae7d7eeedbc5a98.png'
