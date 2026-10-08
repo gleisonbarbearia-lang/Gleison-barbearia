@@ -2287,7 +2287,7 @@ jobs:
                 var t=String(el.textContent||'').replace(/\s+/g,' ').trim();
                 if(/^\d{1,2}:30(?:\s|$)/.test(t)){
                   var r=el.getBoundingClientRect();
-                  if(r.width>20 && r.height>20 && r.top>document.documentElement.clientHeight*.25) el.style.display='none';
+                  if(r.width>20 && r.height>20) el.style.setProperty('display','none','important');
                 }
               });
             }
