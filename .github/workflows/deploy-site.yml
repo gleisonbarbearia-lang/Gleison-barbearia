@@ -2274,11 +2274,14 @@ jobs:
       - name: Criar pacote do site
         uses: actions/upload-pages-artifact@v3
         with:
+          name: gleison-pages
           path: './site'
 
       - name: Publicar no GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: gleison-pages
 
 # Publicação validada no novo repositório - Pages habilitado
 # Logo disponível no branch main
