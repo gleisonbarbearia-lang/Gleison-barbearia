@@ -1541,8 +1541,8 @@ jobs:
                   var ativo=ativoStatus && dataAgendamento && dataAgendamento.getTime()>=Date.now();
                   var botoes=ativo ?
                     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">'+
-                    '<button class="btn secondary" style="padding:10px" type="button" onclick="openReschedule(\\''+escapeHtml(a.id)+'\\',\\''+escapeHtml(a.data_hora)+'\\')">Remarcar</button>'+
-                    '<button class="btn secondary" style="padding:10px" type="button" onclick="cancelAppointment(\\''+escapeHtml(a.id)+'\\')">Cancelar</button>'+
+                    '<button class="btn secondary" style="padding:10px" type="button" onclick="openReschedule(\''+escapeHtml(a.id)+'\\',\\''+escapeHtml(a.data_hora)+'\\')">Remarcar</button>'+
+                    '<button class="btn secondary" style="padding:10px" type="button" onclick="cancelAppointment(\''+escapeHtml(a.id)+'\\')">Cancelar</button>'+
                     '</div>' : '';
                   return '<div class="card'+cls+'">'+
                     '<div class="small">'+escapeHtml(formatDateTime(a.data_hora))+'</div>'+
@@ -2307,6 +2307,37 @@ jobs:
           p.write_text(s,encoding="utf-8")
           print("Horários de 30 minutos ocultados; somente horários de 1 hora ficam disponíveis ao cliente.")
           PY
+
+      - name: Validar HTML e JavaScript finais
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          for filename in ("site/index.html", "site/admin.html"):
+              s=Path(filename).read_text(encoding="utf-8")
+              scripts=re.findall(r'<script\b([^>]*)>(.*?)</script>',s,flags=re.S|re.I)
+              inline=0
+              for i,(attrs,body) in enumerate(scripts):
+                  if re.search(r'\bsrc\s*=',attrs,re.I):
+                      continue
+                  inline+=1
+                  Path(f"/tmp/check-{filename.replace('/','-')}-{i}.js").write_text(body,encoding="utf-8")
+              if inline==0:
+                  raise SystemExit(f"Nenhum script inline encontrado em {filename}")
+              if "<html" not in s.lower() or "<body" not in s.lower():
+                  raise SystemExit(f"HTML estruturalmente incompleto: {filename}")
+
+          idx=Path("site/index.html").read_text(encoding="utf-8")
+          adm=Path("site/admin.html").read_text(encoding="utf-8")
+          if "for(let m=inicio;m<limiteSabado;m+=60)" not in idx:
+              raise SystemExit("Agenda do cliente ainda não está em intervalos de 1 hora.")
+          if "m+=30" in idx or "m+=30" in adm:
+              raise SystemExit("Ainda existe geração de horários em intervalos de 30 minutos.")
+          print("Arquivos finais preparados; iniciando validação de sintaxe JavaScript.")
+          PY
+          for f in /tmp/check-*.js; do node --check "$f"; done
+          echo "Validação final de HTML/JavaScript concluída com sucesso."
 
       - name: Configurar GitHub Pages
         uses: actions/configure-pages@v5
