@@ -2284,8 +2284,8 @@ jobs:
               var els=document.querySelectorAll('button,a,[role="button"],div');
               Array.prototype.forEach.call(els,function(el){
                 if(!el || el.closest('#menu-tres-pontos-overlay')) return;
-                var t=String(el.textContent||'').replace(/\\s+/g,' ').trim();
-                if(/^\\d{2}:30(?:\\s|$)/.test(t) || /\\b\\d{2}:30\\b/.test(t) && (el.classList.contains('time') || el.classList.contains('time-slot') || el.getAttribute('data-time'))){
+                var t=String(el.textContent||'').replace(/\s+/g,' ').trim();
+                if(/^\d{2}:30(?:\s|$)/.test(t) || /\b\d{2}:30\b/.test(t) && (el.classList.contains('time') || el.classList.contains('time-slot') || el.getAttribute('data-time'))){
                   var r=el.getBoundingClientRect();
                   if(r.width>20 && r.height>20 && r.top>document.documentElement.clientHeight*.25) el.style.display='none';
                 }
