@@ -1584,9 +1584,11 @@ async function carregarHorariosRemarcacaoAdmin(data, id){
   const faixa=faixaHorarioAdminPorDia(dia);
   const inicio=faixa.inicio, fim=faixa.fim;
 
+  const almocoInicio=minutosHorarioAdmin((window.__horariosFuncionamentoAdmin||{}).almocoInicio||'11:30');
+  const almocoFim=minutosHorarioAdmin((window.__horariosFuncionamentoAdmin||{}).almocoFim||'14:00');
   const horarios=[];
-  for(let m=inicio;m<=fim;m+=30){
-    if(m>11*60+30 && m<14*60) continue;
+  for(let m=inicio;m<fim;m+=60){
+    if(m>=almocoInicio && m<almocoFim) continue;
     const hh=String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
     const passado=(data===hoje && m<=agoraMin);
     const ocupado=ocupados.has(hh);
@@ -1713,8 +1715,10 @@ window.remarcarAgendamentoAdmin = function(id){
       const faixa=faixaHorarioAdminPorDia(dia);
       const inicio=faixa.inicio;
       const fim=faixa.fim;
+      const almocoInicio=minutosHorarioAdmin((window.__horariosFuncionamentoAdmin||{}).almocoInicio||'11:30');
+      const almocoFim=minutosHorarioAdmin((window.__horariosFuncionamentoAdmin||{}).almocoFim||'14:00');
       const horarios=[];
-      for(let m=inicio;m<=fim;m+=30){
+      for(let m=inicio;m<fim;m+=60){
         if(m>11*60+30 && m<14*60) continue;
         const hh=String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
         const passado=(data===hoje && m<=agoraMin);
@@ -2505,12 +2509,13 @@ async function atualizarHorariosAdmin(){
   const agora=new Date();
   const hoje=hojeLocal();
   const agoraMinutos=agora.getHours()*60+agora.getMinutes();
+  const almocoInicio=minutosHorarioAdmin((window.__horariosFuncionamentoAdmin||{}).almocoInicio||'11:30');
+  const almocoFim=minutosHorarioAdmin((window.__horariosFuncionamentoAdmin||{}).almocoFim||'14:00');
   const horarios=[];
 
-  for(let m=inicio;m<=fim;m+=30){
+  for(let m=inicio;m<fim;m+=60){
     const h=Math.floor(m/60), mi=m%60;
-    // Mantém a pausa de almoço entre 11:30 e 14:00.
-    if(m>11*60 && m<14*60) continue;
+    if(m>=almocoInicio && m<almocoFim) continue;
 
     const hh=String(h).padStart(2,'0')+':'+String(mi).padStart(2,'0');
     const passado=(data===hoje && m<=agoraMinutos);
