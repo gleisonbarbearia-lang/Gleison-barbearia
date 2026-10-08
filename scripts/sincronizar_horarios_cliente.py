@@ -62,6 +62,7 @@ s = s.replace('const inicio=9*60;\\n    const horarios=[];', 'const inicio=inici
 
 # Usa a abertura configurada nos loops que ainda começavam às 09:00.
 s = s.replace('for(let m=9*60;', 'for(let m=inicioAgenda;')
+s = s.replace('const times = ["08:00","08:30","09:00","09:30","10:00","10:30","11:00","14:00","14:30","15:00","15:30","16:00","16:30","17:00","17:30","18:00","18:30","19:00","19:30","20:00"];', 'const times = ["09:00","10:00","11:00","14:00","15:00","16:00","17:00","18:00","19:00","20:00"];')
 # Garante que a renderização real de horários nunca use intervalos de 30 minutos.
 s = s.replace('for(let m=inicio;m<=limiteSabado;m+=30)', 'for(let m=inicio;m<limiteSabado;m+=60)')
 s = s.replace('if(m>11*60+30 && m<14*60) continue;', 'if(m>=almocoInicio && m<almocoFim) continue;')
