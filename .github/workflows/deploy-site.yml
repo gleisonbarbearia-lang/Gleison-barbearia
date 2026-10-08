@@ -2268,6 +2268,40 @@ jobs:
           print("Recuperação de senha por e-mail OK.")
           PY
 
+      - name: Corrigir gerador real de horários para intervalos de 1 hora
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path("site/index.html")
+          s=p.read_text(encoding="utf-8")
+
+          # Corrige a fonte real dos horários do cliente. O código original ainda
+          # tinha uma lista fixa e um loop de 30 minutos; apenas esconder os :30
+          # depois que a tela era criada não era suficiente.
+          s=s.replace(
+              'const times = ["08:00","08:30","09:00","09:30","10:00","10:30","11:00","11:30","12:00","12:30","13:00","13:30","14:00","14:30","15:00","15:30","16:00","16:30","17:00","17:30","18:00","18:30","19:00","19:30","20:00"];',
+              'const times = ["09:00","10:00","11:00","14:00","15:00","16:00","17:00","18:00","19:00","20:00","21:00","22:00","23:00"];'
+          )
+          # Algumas versões do ZIP usam uma lista um pouco diferente.
+          s=re.sub(
+              r'const times = \[[^\n]*\];',
+              'const times = ["09:00","10:00","11:00","14:00","15:00","16:00","17:00","18:00","19:00","20:00","21:00","22:00","23:00"];',
+              s,
+              count=1
+          )
+          s=s.replace('for(let m=inicio;m<=limiteSabado;m+=30){','for(let m=inicio;m<limiteSabado;m+=60){')
+          p.write_text(s,encoding="utf-8")
+
+          if 'const times = ["09:00","10:00","11:00","14:00","15:00","16:00","17:00","18:00","19:00","20:00","21:00","22:00","23:00"];' not in s:
+              raise SystemExit("Falha: lista de horários do cliente não foi corrigida.")
+          if 'for(let m=inicio;m<limiteSabado;m+=60){' not in s:
+              raise SystemExit("Falha: gerador principal do cliente não foi corrigido para 1 hora.")
+          if 'for(let m=inicio;m<=limiteSabado;m+=30){' in s:
+              raise SystemExit("Falha: gerador antigo de 30 minutos ainda está presente.")
+          print("Gerador real do cliente corrigido: somente horários de 1 hora.")
+          PY
+
       - name: Forçar horários de agendamento em intervalos de 1 hora
         run: |
           python3 - <<'PY'
@@ -2276,27 +2310,22 @@ jobs:
           s=p.read_text(encoding="utf-8")
           code=r'''
           <style id="horarios-somente-1-hora-style">
-          /* Clientes só podem visualizar horários cheios: 09:00, 10:00, 11:00... */
+          /* Proteção extra: nenhum horário :30 deve ficar visível ao cliente. */
           </style>
           <script id="horarios-somente-1-hora-script">
           (function(){
             function limpar(){
-              var els=document.querySelectorAll('button,a,[role="button"],div');
+              var els=document.querySelectorAll('#times .time,#rescheduleTimes .time');
               Array.prototype.forEach.call(els,function(el){
-                if(!el || el.closest('#menu-tres-pontos-overlay')) return;
-                var t=String(el.textContent||'').replace(/\s+/g,' ').trim();
-                if(/^\d{1,2}:30(?:\s|$)/.test(t)){
-                  var r=el.getBoundingClientRect();
-                  if(r.width>20 && r.height>20) el.style.setProperty('display','none','important');
-                }
+                var t=String(el.textContent||'').trim();
+                if(/^\d{1,2}:30(?:\s|$)/.test(t)) el.remove();
               });
             }
             function iniciar(){
               limpar();
               if(window.MutationObserver && document.body){
-                new MutationObserver(function(){limpar()}).observe(document.body,{childList:true,subtree:true});
+                new MutationObserver(limpar).observe(document.body,{childList:true,subtree:true});
               }
-              setInterval(limpar,1000);
             }
             if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',iniciar,{once:true}); else iniciar();
           })();
@@ -2305,7 +2334,7 @@ jobs:
           if 'id="horarios-somente-1-hora-script"' not in s:
               s=s.replace("</body>",code+"</body>",1)
           p.write_text(s,encoding="utf-8")
-          print("Horários de 30 minutos ocultados; somente horários de 1 hora ficam disponíveis ao cliente.")
+          print("Proteção extra contra horários de meia hora aplicada.")
           PY
 
       - name: Validar HTML e JavaScript finais
@@ -2330,10 +2359,14 @@ jobs:
 
           idx=Path("site/index.html").read_text(encoding="utf-8")
           adm=Path("site/admin.html").read_text(encoding="utf-8")
+          if 'const times = ["09:00","10:00","11:00","14:00","15:00","16:00","17:00","18:00","19:00","20:00","21:00","22:00","23:00"];' not in idx:
+              raise SystemExit("Lista de horários do cliente ainda contém intervalos de 30 minutos.")
           if "for(let m=inicio;m<limiteSabado;m+=60)" not in idx:
-              raise SystemExit("Agenda do cliente ainda não está em intervalos de 1 hora.")
-          if "m+=30" in idx or "m+=30" in adm:
-              raise SystemExit("Ainda existe geração de horários em intervalos de 30 minutos.")
+              raise SystemExit("Gerador principal da agenda do cliente ainda não está em intervalos de 1 hora.")
+          if "for(let m=inicio;m<=limiteSabado;m+=30)" in idx:
+              raise SystemExit("Gerador antigo de 30 minutos ainda está presente na agenda do cliente.")
+          if re.search(r'const times = \[[^\n]*:(?:30)', idx):
+              raise SystemExit("Lista fixa de remarcação ainda contém horários :30.")
           print("Arquivos finais preparados; iniciando validação de sintaxe JavaScript.")
           PY
           for f in /tmp/check-*.js; do node --check "$f"; done
