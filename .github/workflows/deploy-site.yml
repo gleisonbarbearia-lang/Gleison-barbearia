@@ -1541,8 +1541,8 @@ jobs:
                   var ativo=ativoStatus && dataAgendamento && dataAgendamento.getTime()>=Date.now();
                   var botoes=ativo ?
                     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">'+
-                    '<button class="btn secondary" style="padding:10px" type="button" onclick="openReschedule(\''+escapeHtml(a.id)+'\\',\\''+escapeHtml(a.data_hora)+'\\')">Remarcar</button>'+
-                    '<button class="btn secondary" style="padding:10px" type="button" onclick="cancelAppointment(\''+escapeHtml(a.id)+'\\')">Cancelar</button>'+
+                    '<button class="btn secondary" style="padding:10px" type="button" onclick="openReschedule(\''+escapeHtml(a.id)+'\',\''+escapeHtml(a.data_hora)+'\')">Remarcar</button>'+
+                    '<button class="btn secondary" style="padding:10px" type="button" onclick="cancelAppointment(\''+escapeHtml(a.id)+'\')">Cancelar</button>'+
                     '</div>' : '';
                   return '<div class="card'+cls+'">'+
                     '<div class="small">'+escapeHtml(formatDateTime(a.data_hora))+'</div>'+
