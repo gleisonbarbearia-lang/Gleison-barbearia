@@ -10,7 +10,7 @@ s, n = re.subn(padrao, r'\1"20:30","21:00","22:00","23:00"', s, count=1)
 if n == 0:
     s = s.replace(
         'const timesWeekday = ["09:00","09:30","10:00","10:30","11:00","14:00","14:30","15:00","15:30","16:00","16:30","17:00","17:30","18:00","18:30","19:00","19:30","20:00","20:30"];',
-        'const timesWeekday = ["09:00","09:30","10:00","10:30","11:00","14:00","14:30","15:00","15:30","16:00","16:30","17:00","17:30","18:00","18:30","19:00","19:30","20:00","20:30","21:00","21:30","22:00","22:30","23:00"];'
+        'const timesWeekday = ["09:00","10:00","11:00","14:00","15:00","16:00","17:00","18:00","19:00","20:00"];'
     )
 
 # Domingo e segunda fechados; terça-feira liberada.
@@ -62,6 +62,9 @@ s = s.replace('const inicio=9*60;\\n    const horarios=[];', 'const inicio=inici
 
 # Usa a abertura configurada nos loops que ainda começavam às 09:00.
 s = s.replace('for(let m=9*60;', 'for(let m=inicioAgenda;')
+# Garante que a renderização real de horários nunca use intervalos de 30 minutos.
+s = s.replace('for(let m=inicio;m<=limiteSabado;m+=30)', 'for(let m=inicio;m<limiteSabado;m+=60)')
+s = s.replace('if(m>11*60+30 && m<14*60) continue;', 'if(m>=almocoInicio && m<almocoFim) continue;')
 s = s.replace('for(let i=9*60;', 'for(let i=inicioAgenda;')
 s = s.replace('for(let t=9*60;', 'for(let t=inicioAgenda;')
 
