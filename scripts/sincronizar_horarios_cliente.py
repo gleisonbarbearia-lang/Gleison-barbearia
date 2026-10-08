@@ -27,6 +27,8 @@ s = s.replace(
 old_limite = "const limiteSabado = new Date(data+'T12:00:00').getDay()===6 ? 23*60 : 20*60+30;"
 new_limite = '''let inicioAgenda=9*60;
     let limiteSabado=23*60;
+    let almocoInicio=11*60+30;
+    let almocoFim=14*60;
     try{
       const {data:horarioFuncionamento,error:horarioError}=await supabaseClient.rpc('obter_horarios_funcionamento',{});
       if(horarioError) throw horarioError;
@@ -68,6 +70,9 @@ s = s.replace('for(let m=inicio;m<=limiteSabado;m+=30)', 'for(let m=inicio;m<lim
 s = s.replace('if(m>11*60+30 && m<14*60) continue;', 'if(m>=almocoInicio && m<almocoFim) continue;')
 s = s.replace('for(let i=9*60;', 'for(let i=inicioAgenda;')
 s = s.replace('for(let t=9*60;', 'for(let t=inicioAgenda;')
+
+# Remarcação do cliente também usa intervalos de 1 hora.
+s = s.replace('const times = ["08:00","08:30","09:00","09:30","10:00","10:30","11:00","14:00","14:30","15:00","15:30","16:00","16:30","17:00","17:30","18:00","18:30","19:00","19:30","20:00"];', 'const times = ["09:00","10:00","11:00","14:00","15:00","16:00","17:00","18:00","19:00","20:00"];')
 
 # Atualização rápida enquanto a tela de agendamento está aberta.
 s = s.replace('},15000);', '},2000);')
