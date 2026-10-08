@@ -1719,7 +1719,7 @@ window.remarcarAgendamentoAdmin = function(id){
       const almocoFim=minutosHorarioAdmin((window.__horariosFuncionamentoAdmin||{}).almocoFim||'14:00');
       const horarios=[];
       for(let m=inicio;m<fim;m+=60){
-        if(m>11*60+30 && m<14*60) continue;
+        if(m>=almocoInicio && m<almocoFim) continue;
         const hh=String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
         const passado=(data===hoje && m<=agoraMin);
         if(!ocupados.has(hh) && !passado) horarios.push(hh);
