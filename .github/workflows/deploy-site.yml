@@ -2268,6 +2268,46 @@ jobs:
           print("Recuperação de senha por e-mail OK.")
           PY
 
+      - name: Forçar horários de agendamento em intervalos de 1 hora
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("site/index.html")
+          s=p.read_text(encoding="utf-8")
+          code=r'''
+          <style id="horarios-somente-1-hora-style">
+          /* Clientes só podem visualizar horários cheios: 09:00, 10:00, 11:00... */
+          </style>
+          <script id="horarios-somente-1-hora-script">
+          (function(){
+            function limpar(){
+              var els=document.querySelectorAll('button,a,[role="button"],div');
+              Array.prototype.forEach.call(els,function(el){
+                if(!el || el.closest('#menu-tres-pontos-overlay')) return;
+                var t=String(el.textContent||'').replace(/\\s+/g,' ').trim();
+                if(/^\\d{2}:30(?:\\s|$)/.test(t) || /\\b\\d{2}:30\\b/.test(t) && (el.classList.contains('time') || el.classList.contains('time-slot') || el.getAttribute('data-time'))){
+                  var r=el.getBoundingClientRect();
+                  if(r.width>20 && r.height>20 && r.top>document.documentElement.clientHeight*.25) el.style.display='none';
+                }
+              });
+            }
+            function iniciar(){
+              limpar();
+              if(window.MutationObserver && document.body){
+                new MutationObserver(function(){limpar()}).observe(document.body,{childList:true,subtree:true});
+              }
+              setInterval(limpar,1000);
+            }
+            if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',iniciar,{once:true}); else iniciar();
+          })();
+          </script>
+          '''
+          if 'id="horarios-somente-1-hora-script"' not in s:
+              s=s.replace("</body>",code+"</body>",1)
+          p.write_text(s,encoding="utf-8")
+          print("Horários de 30 minutos ocultados; somente horários de 1 hora ficam disponíveis ao cliente.")
+          PY
+
       - name: Configurar GitHub Pages
         uses: actions/configure-pages@v5
         with:
