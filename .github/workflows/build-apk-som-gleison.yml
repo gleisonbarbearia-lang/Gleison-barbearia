@@ -32,7 +32,7 @@ jobs:
           # O APK deve usar exatamente a versão atualmente publicada no GitHub Pages.
           rm -rf /tmp/site-atual
           mkdir -p /tmp/site-atual
-          curl -fsSL "https://trixluans23-droid.github.io/Gleison-barbearia-2.0/index.html?build=${{ github.run_id }}" -o /tmp/site-atual/index.html
+          curl -fsSL "https://gleisonbarbearia-lang.github.io/index.html?build=${{ github.run_id }}" -o /tmp/site-atual/index.html
           cp /tmp/site-atual/index.html GleisonBarbeariaAndroid/app/src/main/assets/index.html
           cp admin.html GleisonBarbeariaAndroid/app/src/main/assets/admin.html
           test -s GleisonBarbeariaAndroid/app/src/main/assets/index.html
@@ -102,7 +102,7 @@ jobs:
 
                   // O sistema principal fica online no GitHub Pages.
                   // Assim, alterações no HTML/JavaScript chegam ao APK sem reinstalação.
-                  String sistemaOnline = "https://trixluans23-droid.github.io/Gleison-barbearia-2.0/index.html?v="
+                  String sistemaOnline = "https://gleisonbarbearia-lang.github.io/index.html?v="
                           + System.currentTimeMillis();
                   webView.loadUrl(sistemaOnline);
               }
