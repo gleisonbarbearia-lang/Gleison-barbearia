@@ -336,7 +336,7 @@ jobs:
               const h=window.horarioFuncionamentoCliente(data);
               if(!h) return [];
               const lista=[];
-              for(let m=h.inicio;m<=h.fim;m+=30){
+              for(let m=h.inicio;m<h.fim;m+=60){
                 if(m>11*60 && m<14*60) continue;
                 lista.push(String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0'));
               }
