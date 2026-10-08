@@ -14,25 +14,18 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-
       - name: Baixar código
         uses: actions/checkout@v4
-
       - name: Descompactar projeto Android
         run: |
           rm -rf GleisonBarbeariaAndroid
-
           unzip -o "GleisonBarbearia_2.0_V27_FCM.zip"
-
           test -f GleisonBarbeariaAndroid/settings.gradle
           test -f GleisonBarbeariaAndroid/app/build.gradle
           test -f GleisonBarbeariaAndroid/app/google-services.json
           test -f GleisonBarbeariaAndroid/app/src/main/assets/index.html
-
           echo "Estrutura do projeto OK."
-
       - name: Ativar AndroidX
         working-directory: GleisonBarbeariaAndroid
         run: |
@@ -40,21 +33,16 @@ jobs:
           android.useAndroidX=true
           android.enableJetifier=true
           PROPS
-
           echo "AndroidX ativado."
-
       - name: Corrigir MainActivity para versão online
         working-directory: GleisonBarbeariaAndroid
         run: |
           ACTIVITY_FILE="app/src/main/java/com/gleisonbarbearia/app/MainActivity.java"
           MANIFEST_FILE="app/src/main/AndroidManifest.xml"
-
           test -f "$ACTIVITY_FILE"
           test -f "$MANIFEST_FILE"
-
           cat > "$ACTIVITY_FILE" <<'JAVA'
           package com.gleisonbarbearia.app;
-
           import android.app.Activity;
           import android.content.Intent;
           import android.net.Uri;
@@ -64,22 +52,16 @@ jobs:
           import android.webkit.WebSettings;
           import android.webkit.WebView;
           import android.webkit.WebViewClient;
-
           public class MainActivity extends Activity {
-
               private WebView webView;
               private ValueCallback<Uri[]> filePathCallback;
               private static final int FILE_CHOOSER_REQUEST = 1001;
-
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
-
                   webView = new WebView(this);
                   setContentView(webView);
-
                   WebSettings settings = webView.getSettings();
-
                   settings.setJavaScriptEnabled(true);
                   settings.setDomStorageEnabled(true);
                   settings.setDatabaseEnabled(true);
@@ -87,87 +69,56 @@ jobs:
                   settings.setAllowContentAccess(true);
                   settings.setJavaScriptCanOpenWindowsAutomatically(true);
                   settings.setMediaPlaybackRequiresUserGesture(false);
-
                   webView.setWebViewClient(new WebViewClient());
-
                   webView.setWebChromeClient(new WebChromeClient() {
                       @Override
-                      public boolean onShowFileChooser(
-                              WebView view,
-                              ValueCallback<Uri[]> callback,
-                              FileChooserParams params) {
-
-                          if (filePathCallback != null) {
-                              filePathCallback.onReceiveValue(null);
-                          }
-
+                      public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
+                          if (filePathCallback != null) filePathCallback.onReceiveValue(null);
                           filePathCallback = callback;
-
                           Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
                           intent.addCategory(Intent.CATEGORY_OPENABLE);
                           intent.setType("image/*");
-
                           try {
-                              startActivityForResult(
-                                      Intent.createChooser(intent, "Escolher foto"),
-                                      FILE_CHOOSER_REQUEST
-                              );
+                              startActivityForResult(Intent.createChooser(intent, "Escolher foto"), FILE_CHOOSER_REQUEST);
                           } catch (Exception e) {
                               filePathCallback = null;
                               callback.onReceiveValue(null);
                               return false;
                           }
-
                           return true;
                       }
                   });
-
                   webView.loadUrl("https://gleisonbarbearia-lang.github.io/Gleison-barbearia/");
               }
-
               @Override
               protected void onActivityResult(int requestCode, int resultCode, Intent data) {
                   super.onActivityResult(requestCode, resultCode, data);
-
                   if (requestCode == FILE_CHOOSER_REQUEST) {
                       if (filePathCallback == null) return;
-
                       Uri[] results = null;
-
                       if (resultCode == RESULT_OK && data != null) {
                           Uri uri = data.getData();
-                          if (uri != null) {
-                              results = new Uri[]{uri};
-                          }
+                          if (uri != null) results = new Uri[]{uri};
                       }
-
                       filePathCallback.onReceiveValue(results);
                       filePathCallback = null;
                   }
               }
-
               @Override
               public void onBackPressed() {
-                  if (webView != null && webView.canGoBack()) {
-                      webView.goBack();
-                  } else {
-                      super.onBackPressed();
-                  }
+                  if (webView != null && webView.canGoBack()) webView.goBack();
+                  else super.onBackPressed();
               }
           }
           JAVA
-
           if ! grep -q 'android.permission.INTERNET' "$MANIFEST_FILE"; then
             sed -i 's#<application#<uses-permission android:name="android.permission.INTERNET" />\n\n    <application#' "$MANIFEST_FILE"
           fi
-
           echo "MainActivity configurada para abrir o sistema online."
-
       - name: Corrigir conflito FirebaseMessagingService
         working-directory: GleisonBarbeariaAndroid
         run: |
           SERVICE_FILE="app/src/main/java/com/gleisonbarbearia/app/FirebaseMessagingService.java"
-
           if test -f "$SERVICE_FILE"; then
             sed -i '/^import com\.google\.firebase\.messaging\.FirebaseMessagingService;$/d' "$SERVICE_FILE"
             sed -i 's/extends FirebaseMessagingService/extends com.google.firebase.messaging.FirebaseMessagingService/' "$SERVICE_FILE"
@@ -175,13 +126,11 @@ jobs:
           else
             echo "FirebaseMessagingService.java não encontrado; seguindo sem alteração."
           fi
-
       - name: Configurar Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-
       - name: Configurar Android SDK
         uses: android-actions/setup-android@v4
         with:
@@ -189,27 +138,24 @@ jobs:
           accept-android-sdk-licenses: true
           log-accepted-android-sdk-licenses: true
           packages: platform-tools
-
       - name: Configurar Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
-
       - name: Compilar APK
         working-directory: GleisonBarbeariaAndroid
-        run: |
-          gradle assembleDebug --stacktrace
-
+        run: gradle assembleDebug --stacktrace
       - name: Verificar APK gerado
         working-directory: GleisonBarbeariaAndroid
         run: |
           test -f app/build/outputs/apk/debug/app-debug.apk
           echo "APK gerado com sucesso:"
           ls -lh app/build/outputs/apk/debug/app-debug.apk
-
       - name: Disponibilizar APK
         uses: actions/upload-artifact@v4
         with:
           name: GleisonBarbearia-2.0-online-debug-apk
           path: GleisonBarbeariaAndroid/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+      - name: Marcar compilacao corrigida
+        run: echo "Build disparado apos correcao da URL em 2026-10-08"
