@@ -4,9 +4,9 @@ import re
 p = Path("site/index.html")
 s = p.read_text(encoding="utf-8")
 
-# Acrescenta slots de 30 minutos até 23:00 à lista legada.
+# Mantém a lista legada em intervalos de 1 hora.
 padrao = r'(const\s+timesWeekday\s*=\s*\[[^\]]*?)"20:30"'
-s, n = re.subn(padrao, r'\1"20:30","21:00","21:30","22:00","22:30","23:00"', s, count=1)
+s, n = re.subn(padrao, r'\1"20:30","21:00","22:00","23:00"', s, count=1)
 if n == 0:
     s = s.replace(
         'const timesWeekday = ["09:00","09:30","10:00","10:30","11:00","14:00","14:30","15:00","15:30","16:00","16:30","17:00","17:30","18:00","18:30","19:00","19:30","20:00","20:30"];',
@@ -41,6 +41,10 @@ new_limite = '''let inicioAgenda=9*60;
         : (row && row.hora_fechamento));
       if(abertura!==null) inicioAgenda=abertura;
       if(fechamento!==null) limiteSabado=fechamento;
+      const ai=parseMin(row && row.hora_almoco_inicio);
+      const af=parseMin(row && row.hora_almoco_fim);
+      if(ai!==null) almocoInicio=ai;
+      if(af!==null) almocoFim=af;
     }catch(e){
       console.warn('Não foi possível carregar o horário de funcionamento:',e);
     }'''
